@@ -19,14 +19,22 @@
 package org.apache.skywalking.oap.server.core.source;
 
 import lombok.*;
+import org.apache.skywalking.oap.server.core.Const;
+
+import static org.apache.skywalking.oap.server.core.source.DefaultScopeDefine.ENDPOINT_RELATION;
 
 /**
  * @author peng-yongsheng
  */
+@ScopeDeclaration(id = ENDPOINT_RELATION, name = "EndpointRelation")
 public class EndpointRelation extends Source {
 
-    @Override public Scope scope() {
-        return Scope.EndpointRelation;
+    @Override public int scope() {
+        return DefaultScopeDefine.ENDPOINT_RELATION;
+    }
+
+    @Override public String getEntityId() {
+        return String.valueOf(endpointId) + Const.ID_SPLIT + String.valueOf(childEndpointId);
     }
 
     @Getter @Setter private int endpointId;
@@ -43,6 +51,7 @@ public class EndpointRelation extends Source {
     @Getter @Setter private int childServiceInstanceId;
     @Getter @Setter private String childServiceInstanceName;
 
+    @Getter @Setter private int componentId;
     @Getter @Setter private int rpcLatency;
     @Getter @Setter private boolean status;
     @Getter @Setter private int responseCode;

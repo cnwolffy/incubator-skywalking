@@ -19,21 +19,24 @@
 package org.apache.skywalking.oap.server.receiver.trace.provider.parser;
 
 import com.google.protobuf.InvalidProtocolBufferException;
-import java.io.IOException;
 import java.util.*;
+import lombok.Setter;
 import org.apache.skywalking.apm.network.language.agent.*;
-import org.apache.skywalking.oap.server.library.buffer.DataStreamReader;
+import org.apache.skywalking.oap.server.library.buffer.*;
 import org.apache.skywalking.oap.server.library.module.ModuleManager;
 import org.apache.skywalking.oap.server.library.util.TimeBucketUtils;
+import org.apache.skywalking.oap.server.receiver.trace.provider.TraceServiceModuleConfig;
 import org.apache.skywalking.oap.server.receiver.trace.provider.parser.decorator.*;
 import org.apache.skywalking.oap.server.receiver.trace.provider.parser.listener.*;
 import org.apache.skywalking.oap.server.receiver.trace.provider.parser.standardization.*;
+import org.apache.skywalking.oap.server.telemetry.TelemetryModule;
+import org.apache.skywalking.oap.server.telemetry.api.*;
 import org.slf4j.*;
 
 /**
  * @author peng-yongsheng
  */
-public class SegmentParse implements DataStreamReader.CallBack<UpstreamSegment> {
+public class SegmentParse {
 
     private static final Logger logger = LoggerFactory.getLogger(SegmentParse.class);
 
@@ -41,28 +44,43 @@ public class SegmentParse implements DataStreamReader.CallBack<UpstreamSegment> 
     private final List<SpanListener> spanListeners;
     private final SegmentParserListenerManager listenerManager;
     private final SegmentCoreInfo segmentCoreInfo;
-    private final SegmentStandardizationWorker standardizationWorker;
+    private final TraceServiceModuleConfig config;
+    @Setter private SegmentStandardizationWorker standardizationWorker;
+    private volatile static CounterMetrics TRACE_BUFFER_FILE_RETRY;
+    private volatile static CounterMetrics TRACE_BUFFER_FILE_OUT;
+    private volatile static CounterMetrics TRACE_PARSE_ERROR;
 
-    public SegmentParse(ModuleManager moduleManager, SegmentParserListenerManager listenerManager) throws IOException {
+    private SegmentParse(ModuleManager moduleManager, SegmentParserListenerManager listenerManager,
+        TraceServiceModuleConfig config) {
         this.moduleManager = moduleManager;
         this.listenerManager = listenerManager;
         this.spanListeners = new LinkedList<>();
         this.segmentCoreInfo = new SegmentCoreInfo();
         this.segmentCoreInfo.setStartTime(Long.MAX_VALUE);
         this.segmentCoreInfo.setEndTime(Long.MIN_VALUE);
-        this.standardizationWorker = new SegmentStandardizationWorker(moduleManager, listenerManager,this);
+        this.segmentCoreInfo.setV2(false);
+        this.config = config;
+
+        MetricsCreator metricsCreator = moduleManager.find(TelemetryModule.NAME).provider().getService(MetricsCreator.class);
+        TRACE_BUFFER_FILE_RETRY = metricsCreator.createCounter("v5_trace_buffer_file_retry", "The number of retry trace segment from the buffer file, but haven't registered successfully.",
+            MetricsTag.EMPTY_KEY, MetricsTag.EMPTY_VALUE);
+        TRACE_BUFFER_FILE_OUT = metricsCreator.createCounter("v5_trace_buffer_file_out", "The number of trace segment out of the buffer file",
+            MetricsTag.EMPTY_KEY, MetricsTag.EMPTY_VALUE);
+        TRACE_PARSE_ERROR = metricsCreator.createCounter("v5_trace_parse_error", "The number of trace segment out of the buffer file",
+            MetricsTag.EMPTY_KEY, MetricsTag.EMPTY_VALUE);
     }
 
-    @Override public void call(UpstreamSegment segment) {
-        parse(segment, Source.Buffer);
-    }
-
-    public boolean parse(UpstreamSegment segment, Source source) {
+    public boolean parse(BufferData<UpstreamSegment> bufferData, Source source) {
         createSpanListeners();
 
         try {
-            List<UniqueId> traceIds = segment.getGlobalTraceIdsList();
-            TraceSegmentObject segmentObject = parseBinarySegment(segment);
+            UpstreamSegment upstreamSegment = bufferData.getMessageType();
+            List<UniqueId> traceIds = upstreamSegment.getGlobalTraceIdsList();
+
+            if (bufferData.getV1Segment() == null) {
+                bufferData.setV1Segment(parseBinarySegment(upstreamSegment));
+            }
+            TraceSegmentObject segmentObject = bufferData.getV1Segment();
 
             SegmentDecorator segmentDecorator = new SegmentDecorator(segmentObject);
 
@@ -72,19 +90,22 @@ public class SegmentParse implements DataStreamReader.CallBack<UpstreamSegment> 
                 }
 
                 if (source.equals(Source.Agent)) {
-                    writeToBufferFile(segmentCoreInfo.getSegmentId(), segment);
+                    writeToBufferFile(segmentCoreInfo.getSegmentId(), upstreamSegment);
+                } else {
+                    // from SegmentSource.Buffer
+                    TRACE_BUFFER_FILE_RETRY.inc();
                 }
                 return false;
             } else {
                 if (logger.isDebugEnabled()) {
                     logger.debug("This segment id exchange success, id: {}", segmentCoreInfo.getSegmentId());
                 }
-
+                TRACE_BUFFER_FILE_OUT.inc();
                 notifyListenerToBuild();
-                buildSegment(segmentCoreInfo.getSegmentId(), segmentDecorator.toByteArray());
                 return true;
             }
         } catch (Throwable e) {
+            TRACE_PARSE_ERROR.inc();
             logger.error(e.getMessage(), e);
             return true;
         }
@@ -110,19 +131,23 @@ public class SegmentParse implements DataStreamReader.CallBack<UpstreamSegment> 
         }
 
         segmentCoreInfo.setSegmentId(segmentIdBuilder.toString());
-        segmentCoreInfo.setApplicationId(segmentDecorator.getApplicationId());
-        segmentCoreInfo.setApplicationInstanceId(segmentDecorator.getApplicationInstanceId());
+        segmentCoreInfo.setServiceId(segmentDecorator.getServiceId());
+        segmentCoreInfo.setServiceInstanceId(segmentDecorator.getServiceInstanceId());
+        segmentCoreInfo.setDataBinary(segmentDecorator.toByteArray());
+        segmentCoreInfo.setV2(false);
+
+        boolean exchanged = true;
 
         for (int i = 0; i < segmentDecorator.getSpansCount(); i++) {
             SpanDecorator spanDecorator = segmentDecorator.getSpans(i);
 
-            if (!SpanIdExchanger.getInstance(moduleManager).exchange(spanDecorator, segmentCoreInfo.getApplicationId())) {
-                return false;
+            if (!SpanIdExchanger.getInstance(moduleManager).exchange(spanDecorator, segmentCoreInfo.getServiceId())) {
+                exchanged = false;
             } else {
                 for (int j = 0; j < spanDecorator.getRefsCount(); j++) {
                     ReferenceDecorator referenceDecorator = spanDecorator.getRefs(j);
-                    if (!ReferenceIdExchanger.getInstance(moduleManager).exchange(referenceDecorator, segmentCoreInfo.getApplicationId())) {
-                        return false;
+                    if (!ReferenceIdExchanger.getInstance(moduleManager).exchange(referenceDecorator, segmentCoreInfo.getServiceId())) {
+                        exchanged = false;
                     }
                 }
             }
@@ -136,35 +161,30 @@ public class SegmentParse implements DataStreamReader.CallBack<UpstreamSegment> 
             segmentCoreInfo.setError(spanDecorator.getIsError() || segmentCoreInfo.isError());
         }
 
-        long minuteTimeBucket = TimeBucketUtils.INSTANCE.getMinuteTimeBucket(segmentCoreInfo.getStartTime());
-        segmentCoreInfo.setMinuteTimeBucket(minuteTimeBucket);
+        if (exchanged) {
+            long minuteTimeBucket = TimeBucketUtils.INSTANCE.getMinuteTimeBucket(segmentCoreInfo.getStartTime());
+            segmentCoreInfo.setMinuteTimeBucket(minuteTimeBucket);
 
-        for (int i = 0; i < segmentDecorator.getSpansCount(); i++) {
-            SpanDecorator spanDecorator = segmentDecorator.getSpans(i);
+            for (int i = 0; i < segmentDecorator.getSpansCount(); i++) {
+                SpanDecorator spanDecorator = segmentDecorator.getSpans(i);
 
-            if (spanDecorator.getSpanId() == 0) {
-                notifyFirstListener(spanDecorator);
-            }
+                if (spanDecorator.getSpanId() == 0) {
+                    notifyFirstListener(spanDecorator);
+                }
 
-            if (SpanType.Exit.equals(spanDecorator.getSpanType())) {
-                notifyExitListener(spanDecorator);
-            } else if (SpanType.Entry.equals(spanDecorator.getSpanType())) {
-                notifyEntryListener(spanDecorator);
-            } else if (SpanType.Local.equals(spanDecorator.getSpanType())) {
-                notifyLocalListener(spanDecorator);
-            } else {
-                logger.error("span type value was unexpected, span type name: {}", spanDecorator.getSpanType().name());
+                if (SpanType.Exit.equals(spanDecorator.getSpanType())) {
+                    notifyExitListener(spanDecorator);
+                } else if (SpanType.Entry.equals(spanDecorator.getSpanType())) {
+                    notifyEntryListener(spanDecorator);
+                } else if (SpanType.Local.equals(spanDecorator.getSpanType())) {
+                    notifyLocalListener(spanDecorator);
+                } else {
+                    logger.error("span type value was unexpected, span type name: {}", spanDecorator.getSpanType().name());
+                }
             }
         }
 
-        return true;
-    }
-
-    private void buildSegment(String id, byte[] dataBinary) {
-//        Segment segment = new Segment();
-//        segment.setId(id);
-//        segment.setDataBinary(dataBinary);
-//        segment.setTimeBucket(segmentCoreInfo.getMinuteTimeBucket());
+        return exchanged;
     }
 
     private void writeToBufferFile(String id, UpstreamSegment upstreamSegment) {
@@ -216,17 +236,49 @@ public class SegmentParse implements DataStreamReader.CallBack<UpstreamSegment> 
 
     private void notifyGlobalsListener(UniqueId uniqueId) {
         spanListeners.forEach(listener -> {
-            if (listener.containsPoint(SpanListener.Point.GlobalTraceIds)) {
+            if (listener.containsPoint(SpanListener.Point.TraceIds)) {
                 ((GlobalTraceIdsListener)listener).parseGlobalTraceId(uniqueId, segmentCoreInfo);
             }
         });
     }
 
     private void createSpanListeners() {
-        listenerManager.getSpanListenerFactories().forEach(spanListenerFactory -> spanListeners.add(spanListenerFactory.create(moduleManager)));
+        listenerManager.getSpanListenerFactories().forEach(spanListenerFactory -> spanListeners.add(spanListenerFactory.create(moduleManager, config)));
     }
 
     public enum Source {
         Agent, Buffer
+    }
+
+    public static class Producer implements DataStreamReader.CallBack<UpstreamSegment> {
+
+        @Setter private SegmentStandardizationWorker standardizationWorker;
+        private final ModuleManager moduleManager;
+        private final SegmentParserListenerManager listenerManager;
+        private final TraceServiceModuleConfig config;
+
+        public Producer(ModuleManager moduleManager, SegmentParserListenerManager listenerManager,
+            TraceServiceModuleConfig config) {
+            this.moduleManager = moduleManager;
+            this.listenerManager = listenerManager;
+            this.config = config;
+        }
+
+        public void send(UpstreamSegment segment, Source source) {
+            SegmentParse segmentParse = new SegmentParse(moduleManager, listenerManager, config);
+            segmentParse.setStandardizationWorker(standardizationWorker);
+            segmentParse.parse(new BufferData<>(segment), source);
+        }
+
+        @Override public boolean call(BufferData<UpstreamSegment> bufferData) {
+            SegmentParse segmentParse = new SegmentParse(moduleManager, listenerManager, config);
+            segmentParse.setStandardizationWorker(standardizationWorker);
+            boolean parseResult = segmentParse.parse(bufferData, Source.Buffer);
+            if (parseResult) {
+                segmentParse.TRACE_BUFFER_FILE_OUT.inc();
+            }
+
+            return parseResult;
+        }
     }
 }

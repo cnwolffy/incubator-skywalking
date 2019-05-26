@@ -19,15 +19,16 @@
 package org.apache.skywalking.oap.server.receiver.trace.provider.parser.standardization;
 
 import java.io.IOException;
-import java.util.*;
-
+import java.util.List;
 import org.apache.skywalking.apm.commons.datacarrier.DataCarrier;
 import org.apache.skywalking.apm.commons.datacarrier.consumer.IConsumer;
 import org.apache.skywalking.apm.network.language.agent.UpstreamSegment;
 import org.apache.skywalking.oap.server.core.worker.AbstractWorker;
 import org.apache.skywalking.oap.server.library.buffer.BufferStream;
-import org.apache.skywalking.oap.server.library.module.ModuleManager;
-import org.apache.skywalking.oap.server.receiver.trace.provider.parser.*;
+import org.apache.skywalking.oap.server.library.module.ModuleDefineHolder;
+import org.apache.skywalking.oap.server.receiver.trace.provider.parser.SegmentParse;
+import org.apache.skywalking.oap.server.telemetry.TelemetryModule;
+import org.apache.skywalking.oap.server.telemetry.api.*;
 import org.slf4j.*;
 
 /**
@@ -38,37 +39,43 @@ public class SegmentStandardizationWorker extends AbstractWorker<SegmentStandard
     private static final Logger logger = LoggerFactory.getLogger(SegmentStandardizationWorker.class);
 
     private final DataCarrier<SegmentStandardization> dataCarrier;
-    private final BufferStream<UpstreamSegment> stream;
+    private CounterMetrics traceBufferFileIn;
 
-    public SegmentStandardizationWorker(ModuleManager moduleManager,
-                                        SegmentParserListenerManager listenerManager, SegmentParse segmentParse) throws IOException {
-        super(9999);
-        this.dataCarrier = new DataCarrier<>(1, 1024);
-        this.dataCarrier.consume(new Consumer(this), 1);
+    public SegmentStandardizationWorker(ModuleDefineHolder moduleDefineHolder,
+        SegmentParse.Producer segmentParseCreator, String path, int offsetFileMaxSize,
+        int dataFileMaxSize, boolean cleanWhenRestart, boolean isV6) throws IOException {
+        super(moduleDefineHolder);
 
-        String directory = "/Users/pengys5/code/sky-walking/buffer-test";
-        BufferStream.Builder<UpstreamSegment> builder = new BufferStream.Builder<>(directory);
-//        builder.cleanWhenRestart(true);
-        builder.dataFileMaxSize(50);
-        builder.offsetFileMaxSize(10);
+        BufferStream.Builder<UpstreamSegment> builder = new BufferStream.Builder<>(path);
+        builder.cleanWhenRestart(cleanWhenRestart);
+        builder.dataFileMaxSize(dataFileMaxSize);
+        builder.offsetFileMaxSize(offsetFileMaxSize);
         builder.parser(UpstreamSegment.parser());
-        builder.callBack(segmentParse);
+        builder.callBack(segmentParseCreator);
 
-        stream = builder.build();
+        BufferStream<UpstreamSegment> stream = builder.build();
         stream.initialize();
+
+        dataCarrier = new DataCarrier<>("SegmentStandardizationWorker", 1, 1024);
+        dataCarrier.consume(new Consumer(stream), 1, 200);
+
+        MetricsCreator metricsCreator = moduleDefineHolder.find(TelemetryModule.NAME).provider().getService(MetricsCreator.class);
+        String metricNamePrefix = isV6 ? "v6_" : "v5_";
+        traceBufferFileIn = metricsCreator.createCounter(metricNamePrefix + "trace_buffer_file_in", "The number of trace segment into the buffer file",
+            MetricsTag.EMPTY_KEY, MetricsTag.EMPTY_VALUE);
     }
 
     @Override
     public void in(SegmentStandardization standardization) {
-        stream.write(standardization.getUpstreamSegment());
+        dataCarrier.produce(standardization);
     }
 
     private class Consumer implements IConsumer<SegmentStandardization> {
 
-        private final SegmentStandardizationWorker aggregator;
+        private final BufferStream<UpstreamSegment> stream;
 
-        private Consumer(SegmentStandardizationWorker aggregator) {
-            this.aggregator = aggregator;
+        private Consumer(BufferStream<UpstreamSegment> stream) {
+            this.stream = stream;
         }
 
         @Override
@@ -77,16 +84,9 @@ public class SegmentStandardizationWorker extends AbstractWorker<SegmentStandard
 
         @Override
         public void consume(List<SegmentStandardization> data) {
-            Iterator<SegmentStandardization> inputIterator = data.iterator();
-
-            int i = 0;
-            while (inputIterator.hasNext()) {
-                SegmentStandardization indicator = inputIterator.next();
-                i++;
-                if (i == data.size()) {
-                    indicator.getEndOfBatchContext().setEndOfBatch(true);
-                }
-                aggregator.in(indicator);
+            for (SegmentStandardization aData : data) {
+                traceBufferFileIn.inc();
+                stream.write(aData.getUpstreamSegment());
             }
         }
 

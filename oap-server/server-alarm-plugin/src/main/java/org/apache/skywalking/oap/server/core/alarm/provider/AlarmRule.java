@@ -31,11 +31,12 @@ import lombok.Setter;
 public class AlarmRule {
     private String alarmRuleName;
 
-    private String indicatorName;
+    private String metricsName;
     private ArrayList includeNames;
     private String threshold;
     private String op;
     private int period;
     private int count;
     private int silencePeriod;
+    private String message;
 }

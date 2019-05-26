@@ -43,17 +43,17 @@ public class EndpointInventoryCacheEsDAO extends EsDAO implements IEndpointInven
         super(client);
     }
 
-    @Override public int getEndpointId(int serviceId, String endpointName) {
+    @Override public int getEndpointId(int serviceId, String endpointName, int detectPoint) {
         try {
-            String id = EndpointInventory.buildId(serviceId, endpointName);
-            GetResponse response = getClient().get(EndpointInventory.MODEL_NAME, id);
+            String id = EndpointInventory.buildId(serviceId, endpointName, detectPoint);
+            GetResponse response = getClient().get(EndpointInventory.INDEX_NAME, id);
             if (response.isExists()) {
                 return (int)response.getSource().getOrDefault(RegisterSource.SEQUENCE, 0);
             } else {
                 return Const.NONE;
             }
         } catch (Throwable e) {
-            logger.error(e.getMessage());
+            logger.error(e.getMessage(), e);
             return Const.NONE;
         }
     }
@@ -64,7 +64,7 @@ public class EndpointInventoryCacheEsDAO extends EsDAO implements IEndpointInven
             searchSourceBuilder.query(QueryBuilders.termQuery(EndpointInventory.SEQUENCE, endpointId));
             searchSourceBuilder.size(1);
 
-            SearchResponse response = getClient().search(EndpointInventory.MODEL_NAME, searchSourceBuilder);
+            SearchResponse response = getClient().search(EndpointInventory.INDEX_NAME, searchSourceBuilder);
             if (response.getHits().totalHits == 1) {
                 SearchHit searchHit = response.getHits().getAt(0);
                 return builder.map2Data(searchHit.getSourceAsMap());
@@ -72,7 +72,7 @@ public class EndpointInventoryCacheEsDAO extends EsDAO implements IEndpointInven
                 return null;
             }
         } catch (Throwable e) {
-            logger.error(e.getMessage());
+            logger.error(e.getMessage(), e);
             return null;
         }
     }

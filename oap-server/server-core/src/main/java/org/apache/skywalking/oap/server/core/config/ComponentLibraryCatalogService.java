@@ -20,6 +20,7 @@ package org.apache.skywalking.oap.server.core.config;
 
 import java.io.*;
 import java.util.*;
+import org.apache.skywalking.oap.server.core.Const;
 import org.apache.skywalking.oap.server.library.util.ResourceUtils;
 import org.slf4j.*;
 import org.yaml.snakeyaml.Yaml;
@@ -61,8 +62,9 @@ public class ComponentLibraryCatalogService implements IComponentLibraryCatalogS
     }
 
     @Override
-    public String getServerName(int componentServerId) {
-        return getComponentName(componentServerId);
+    public String getServerNameBasedOnComponent(int componentId) {
+        Integer serverComponentId = componentId2ServerId.get(componentId);
+        return serverComponentId == null ? Const.UNKNOWN : getComponentName(serverComponentId);
     }
 
     private void init() throws InitialComponentCatalogException {
@@ -96,7 +98,7 @@ public class ComponentLibraryCatalogService implements IComponentLibraryCatalogS
                     throw new InitialComponentCatalogException("Component name [" + name + "] in Component-Server-Mappings doesn't exist in component define. ");
                 }
                 if (!componentName2Id.containsKey(serverName)) {
-                    throw new InitialComponentCatalogException("Server component name [" + serverName + "] in Component-Server-Mappings doesn't exist in component define. ");
+                    throw new InitialComponentCatalogException("Server componentId name [" + serverName + "] in Component-Server-Mappings doesn't exist in component define. ");
                 }
 
                 componentId2ServerId.put(componentName2Id.get(name), componentName2Id.get(serverName));

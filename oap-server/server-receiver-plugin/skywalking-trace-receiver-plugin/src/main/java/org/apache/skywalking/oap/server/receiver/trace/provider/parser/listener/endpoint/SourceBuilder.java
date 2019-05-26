@@ -19,6 +19,7 @@
 package org.apache.skywalking.oap.server.receiver.trace.provider.parser.listener.endpoint;
 
 import lombok.*;
+import org.apache.skywalking.apm.util.StringUtil;
 import org.apache.skywalking.oap.server.core.source.*;
 
 /**
@@ -38,12 +39,26 @@ class SourceBuilder {
     @Getter @Setter private String destServiceInstanceName;
     @Getter @Setter private int destEndpointId;
     @Getter @Setter private String destEndpointName;
+    @Getter @Setter private int componentId;
     @Getter @Setter private int latency;
     @Getter @Setter private boolean status;
     @Getter @Setter private int responseCode;
     @Getter @Setter private RequestType type;
     @Getter @Setter private DetectPoint detectPoint;
     @Getter @Setter private long timeBucket;
+
+    All toAll() {
+        All all = new All();
+        all.setName(destServiceName);
+        all.setServiceInstanceName(destServiceInstanceName);
+        all.setEndpointName(destEndpointName);
+        all.setLatency(latency);
+        all.setStatus(status);
+        all.setResponseCode(responseCode);
+        all.setType(type);
+        all.setTimeBucket(timeBucket);
+        return all;
+    }
 
     Service toService() {
         Service service = new Service();
@@ -68,6 +83,7 @@ class SourceBuilder {
         serviceRelation.setDestServiceName(destServiceName);
         serviceRelation.setDestServiceInstanceName(destServiceInstanceName);
         serviceRelation.setEndpoint(destEndpointName);
+        serviceRelation.setComponentId(componentId);
         serviceRelation.setLatency(latency);
         serviceRelation.setStatus(status);
         serviceRelation.setResponseCode(responseCode);
@@ -103,6 +119,7 @@ class SourceBuilder {
         serviceInstanceRelation.setDestServiceName(destServiceName);
         serviceInstanceRelation.setDestServiceInstanceName(destServiceInstanceName);
         serviceInstanceRelation.setEndpoint(destEndpointName);
+        serviceInstanceRelation.setComponentId(componentId);
         serviceInstanceRelation.setLatency(latency);
         serviceInstanceRelation.setStatus(status);
         serviceInstanceRelation.setResponseCode(responseCode);
@@ -129,6 +146,9 @@ class SourceBuilder {
     }
 
     EndpointRelation toEndpointRelation() {
+        if (StringUtil.isEmpty(sourceEndpointName) || StringUtil.isEmpty(destEndpointName)) {
+            return null;
+        }
         EndpointRelation endpointRelation = new EndpointRelation();
         endpointRelation.setEndpointId(sourceEndpointId);
         endpointRelation.setEndpoint(sourceEndpointName);
@@ -142,6 +162,7 @@ class SourceBuilder {
         endpointRelation.setChildServiceName(destServiceName);
         endpointRelation.setChildServiceInstanceId(destServiceInstanceId);
         endpointRelation.setChildServiceInstanceName(destServiceInstanceName);
+        endpointRelation.setComponentId(componentId);
         endpointRelation.setRpcLatency(latency);
         endpointRelation.setStatus(status);
         endpointRelation.setResponseCode(responseCode);
@@ -149,5 +170,19 @@ class SourceBuilder {
         endpointRelation.setDetectPoint(detectPoint);
         endpointRelation.setTimeBucket(timeBucket);
         return endpointRelation;
+    }
+
+    DatabaseAccess toDatabaseAccess() {
+        if (!RequestType.DATABASE.equals(type)) {
+            return null;
+        }
+        DatabaseAccess databaseAccess = new DatabaseAccess();
+        databaseAccess.setId(destServiceId);
+        databaseAccess.setDatabaseTypeId(componentId);
+        databaseAccess.setLatency(latency);
+        databaseAccess.setName(destServiceName);
+        databaseAccess.setStatus(status);
+        databaseAccess.setTimeBucket(timeBucket);
+        return databaseAccess;
     }
 }

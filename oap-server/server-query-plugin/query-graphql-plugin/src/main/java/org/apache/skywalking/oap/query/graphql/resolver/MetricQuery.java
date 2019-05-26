@@ -19,18 +19,51 @@
 package org.apache.skywalking.oap.query.graphql.resolver;
 
 import com.coxautodev.graphql.tools.GraphQLQueryResolver;
+import java.io.IOException;
+import java.text.ParseException;
 import org.apache.skywalking.oap.query.graphql.type.*;
+import org.apache.skywalking.oap.server.core.CoreModule;
+import org.apache.skywalking.oap.server.core.query.*;
+import org.apache.skywalking.oap.server.core.query.entity.*;
+import org.apache.skywalking.oap.server.library.module.ModuleManager;
 
+/**
+ * @author peng-yongsheng
+ */
 public class MetricQuery implements GraphQLQueryResolver {
-    public LinearIntValues getLinearIntValues(final MetricCondition metric, final Duration duration) {
-        return new LinearIntValues();
+
+    private final ModuleManager moduleManager;
+    private MetricQueryService metricQueryService;
+
+    public MetricQuery(ModuleManager moduleManager) {
+        this.moduleManager = moduleManager;
     }
 
-    public Thermodynamic getThermodynamic(final MetricCondition metric, final Duration duration) {
-        return new Thermodynamic();
+    private MetricQueryService getMetricQueryService() {
+        if (metricQueryService == null) {
+            this.metricQueryService = moduleManager.find(CoreModule.NAME).provider().getService(MetricQueryService.class);
+        }
+        return metricQueryService;
     }
 
-    public LinearIntValues getValues(final BatchMetricConditions metric, final Duration duration) {
-        return new LinearIntValues();
+    public IntValues getValues(final BatchMetricConditions metrics, final Duration duration) throws IOException {
+        long startTimeBucket = DurationUtils.INSTANCE.exchangeToTimeBucket(duration.getStart());
+        long endTimeBucket = DurationUtils.INSTANCE.exchangeToTimeBucket(duration.getEnd());
+
+        return getMetricQueryService().getValues(metrics.getName(), metrics.getIds(), duration.getStep(), startTimeBucket, endTimeBucket);
+    }
+
+    public IntValues getLinearIntValues(final MetricCondition metrics, final Duration duration) throws IOException, ParseException {
+        long startTimeBucket = DurationUtils.INSTANCE.exchangeToTimeBucket(duration.getStart());
+        long endTimeBucket = DurationUtils.INSTANCE.exchangeToTimeBucket(duration.getEnd());
+
+        return getMetricQueryService().getLinearIntValues(metrics.getName(), metrics.getId(), duration.getStep(), startTimeBucket, endTimeBucket);
+    }
+
+    public Thermodynamic getThermodynamic(final MetricCondition metrics, final Duration duration) throws IOException, ParseException {
+        long startTimeBucket = DurationUtils.INSTANCE.exchangeToTimeBucket(duration.getStart());
+        long endTimeBucket = DurationUtils.INSTANCE.exchangeToTimeBucket(duration.getEnd());
+
+        return getMetricQueryService().getThermodynamic(metrics.getName(), metrics.getId(), duration.getStep(), startTimeBucket, endTimeBucket);
     }
 }

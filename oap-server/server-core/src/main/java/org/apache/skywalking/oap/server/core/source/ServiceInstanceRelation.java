@@ -19,14 +19,22 @@
 package org.apache.skywalking.oap.server.core.source;
 
 import lombok.*;
+import org.apache.skywalking.oap.server.core.Const;
+
+import static org.apache.skywalking.oap.server.core.source.DefaultScopeDefine.SERVICE_INSTANCE_RELATION;
 
 /**
  * @author peng-yongsheng
  */
+@ScopeDeclaration(id = SERVICE_INSTANCE_RELATION, name = "ServiceInstanceRelation")
 public class ServiceInstanceRelation extends Source {
 
-    @Override public Scope scope() {
-        return Scope.ServiceInstanceRelation;
+    @Override public int scope() {
+        return DefaultScopeDefine.SERVICE_INSTANCE_RELATION;
+    }
+
+    @Override public String getEntityId() {
+        return String.valueOf(sourceServiceInstanceId) + Const.ID_SPLIT + String.valueOf(destServiceInstanceId) + Const.ID_SPLIT + String.valueOf(componentId);
     }
 
     @Getter @Setter private int sourceServiceInstanceId;
@@ -38,6 +46,7 @@ public class ServiceInstanceRelation extends Source {
     @Getter @Setter private String destServiceName;
     @Getter @Setter private String destServiceInstanceName;
     @Getter @Setter private String endpoint;
+    @Getter @Setter private int componentId;
     @Getter @Setter private int latency;
     @Getter @Setter private boolean status;
     @Getter @Setter private int responseCode;

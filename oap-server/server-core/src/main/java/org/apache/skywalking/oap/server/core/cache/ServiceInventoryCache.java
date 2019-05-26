@@ -19,11 +19,13 @@
 package org.apache.skywalking.oap.server.core.cache;
 
 import com.google.common.cache.*;
+import java.util.Objects;
 import org.apache.skywalking.oap.server.core.Const;
 import org.apache.skywalking.oap.server.core.register.ServiceInventory;
 import org.apache.skywalking.oap.server.core.storage.StorageModule;
 import org.apache.skywalking.oap.server.core.storage.cache.IServiceInventoryCacheDAO;
 import org.apache.skywalking.oap.server.library.module.*;
+import org.apache.skywalking.oap.server.library.util.BooleanUtils;
 import org.slf4j.*;
 
 import static java.util.Objects.*;
@@ -35,6 +37,7 @@ public class ServiceInventoryCache implements Service {
 
     private static final Logger logger = LoggerFactory.getLogger(ServiceInventoryCache.class);
 
+    private final ServiceInventory userService;
     private final Cache<String, Integer> serviceNameCache = CacheBuilder.newBuilder().initialCapacity(100).maximumSize(1000).build();
     private final Cache<String, Integer> addressIdCache = CacheBuilder.newBuilder().initialCapacity(100).maximumSize(1000).build();
     private final Cache<Integer, ServiceInventory> serviceIdCache = CacheBuilder.newBuilder().initialCapacity(100).maximumSize(1000).build();
@@ -44,24 +47,24 @@ public class ServiceInventoryCache implements Service {
 
     public ServiceInventoryCache(ModuleManager moduleManager) {
         this.moduleManager = moduleManager;
+
+        this.userService = new ServiceInventory();
+        this.userService.setSequence(Const.USER_SERVICE_ID);
+        this.userService.setName(Const.USER_CODE);
+        this.userService.setIsAddress(BooleanUtils.FALSE);
     }
 
     private IServiceInventoryCacheDAO getCacheDAO() {
         if (isNull(cacheDAO)) {
-            this.cacheDAO = moduleManager.find(StorageModule.NAME).getService(IServiceInventoryCacheDAO.class);
+            this.cacheDAO = moduleManager.find(StorageModule.NAME).provider().getService(IServiceInventoryCacheDAO.class);
         }
         return this.cacheDAO;
     }
 
     public int getServiceId(String serviceName) {
-        int serviceId = Const.NONE;
-        try {
-            serviceId = serviceNameCache.get(ServiceInventory.buildId(serviceName), () -> getCacheDAO().getServiceId(serviceName));
-        } catch (Throwable e) {
-            logger.error(e.getMessage(), e);
-        }
+        Integer serviceId = serviceNameCache.getIfPresent(ServiceInventory.buildId(serviceName));
 
-        if (serviceId == Const.NONE) {
+        if (Objects.isNull(serviceId) || serviceId == Const.NONE) {
             serviceId = getCacheDAO().getServiceId(serviceName);
             if (serviceId != Const.NONE) {
                 serviceNameCache.put(ServiceInventory.buildId(serviceName), serviceId);
@@ -71,14 +74,9 @@ public class ServiceInventoryCache implements Service {
     }
 
     public int getServiceId(int addressId) {
-        int serviceId = Const.NONE;
-        try {
-            serviceId = addressIdCache.get(ServiceInventory.buildId(addressId), () -> getCacheDAO().getServiceId(addressId));
-        } catch (Throwable e) {
-            logger.error(e.getMessage(), e);
-        }
+        Integer serviceId = addressIdCache.getIfPresent(ServiceInventory.buildId(addressId));
 
-        if (serviceId == Const.NONE) {
+        if (Objects.isNull(serviceId) || serviceId == Const.NONE) {
             serviceId = getCacheDAO().getServiceId(addressId);
             if (serviceId != Const.NONE) {
                 addressIdCache.put(ServiceInventory.buildId(addressId), serviceId);
@@ -88,12 +86,15 @@ public class ServiceInventoryCache implements Service {
     }
 
     public ServiceInventory get(int serviceId) {
-        ServiceInventory serviceInventory = null;
-        try {
-            serviceInventory = serviceIdCache.get(serviceId, () -> getCacheDAO().get(serviceId));
-        } catch (Throwable e) {
-            logger.error(e.getMessage(), e);
+        if (logger.isDebugEnabled()) {
+            logger.debug("Get service by id {} from cache", serviceId);
         }
+
+        if (Const.USER_SERVICE_ID == serviceId) {
+            return userService;
+        }
+
+        ServiceInventory serviceInventory = serviceIdCache.getIfPresent(serviceId);
 
         if (isNull(serviceInventory)) {
             serviceInventory = getCacheDAO().get(serviceId);
@@ -101,6 +102,13 @@ public class ServiceInventoryCache implements Service {
                 serviceIdCache.put(serviceId, serviceInventory);
             }
         }
+
+        if (logger.isDebugEnabled()) {
+            if (Objects.isNull(serviceInventory)) {
+                logger.debug("service id {} not find in cache.", serviceId);
+            }
+        }
+
         return serviceInventory;
     }
 }

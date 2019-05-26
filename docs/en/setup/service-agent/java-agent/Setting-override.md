@@ -1,38 +1,69 @@
 # Setting Override
-## Supported version
-5.0.0-beta + 
+In default, SkyWalking provide `agent.config` for agent.
 
-_Agent setting override supported since 3.2.5_
+Setting override means end user can override the settings in these config file, through using system properties or agent options.
 
-## What is setting override?
-In default, SkyWalking provide `agent.config` for client, and `application.yml` for server settings. 
 
-Setting override means end user can override the settings in these config file, by using system properties.
+## System properties
 
-## Override priority
-System.Properties(-D) > Config file
- 
-## Override
-### Agent
-Use `skywalking.` + key in config file as system properties and envs key, to override the value.
+Use `skywalking.` + key in config file as system properties key, to override the value.
 
 - Why need this prefix?
 
-  The agent system properites and env share with target application, this prefix can avoid variable conflict.
-  
-### Collector
-Use key in config file as system properties and envs key, to override the value.
+  The agent system properties and env share with target application, this prefix can avoid variable conflict.
 
-Example:
-- Setting in `application.yml`
-```yaml
-agent_gRPC:
-  gRPC:
-    host: localhost
-    port: 11800
+- Example
+
+  Override `agent.application_code` by this.
+```
+-Dskywalking.agent.application_code=31200
 ```
 
-- Override port to 31200 by system property, add the following line into startup script.
+## Agent options
+
+Add the properties after the agent path in JVM arguments.
+
 ```
--Dagent_gRPC.gRPC.port=31200
+-javaagent:/path/to/skywalking-agent.jar=[option1]=[value1],[option2]=[value2]
 ```
+
+- Example
+
+  Override `agent.application_code` and `logging.level` by this.
+
+```
+-javaagent:/path/to/skywalking-agent.jar=agent.application_code=31200,logging.level=debug
+```
+
+- Special characters
+
+  If a separator(`,` or `=`) in the option or value, it should be wrapped in quotes.
+
+```
+-javaagent:/path/to/skywalking-agent.jar=agent.ignore_suffix='.jpg,.jpeg'
+```
+
+## System environment variables
+- Example
+
+  Override `agent.application_code` and `logging.level` by this.
+
+```
+# The service name in UI
+agent.service_name=${SW_AGENT_NAME:Your_ApplicationName}
+
+# Logging level
+logging.level=${SW_LOGGING_LEVEL:INFO}
+```
+
+If the `SW_AGENT_NAME ` environment variable exists in your operating system and its value is `skywalking-agent-demo`, 
+then the value of `agent.service_name` here will be overwritten to `skywalking-agent-demo`, otherwise, it will be set to `Your_ApplicationName`.
+
+By the way, Placeholder nesting is also supported, like `${SW_AGENT_NAME:${ANOTHER_AGENT_NAME:Your_ApplicationName}}`.
+In this case, if the `SW_AGENT_NAME ` environment variable not exists, but the ```ANOTHER_AGENT_NAME``` 
+environment variable exists and its value is `skywalking-agent-demo`, then the value of `agent.service_name` here will be overwritten to `skywalking-agent-demo`,otherwise, it will be set to `Your_ApplicationName`.
+
+
+## Override priority
+
+Agent Options > System.Properties(-D) > System environment variables > Config file

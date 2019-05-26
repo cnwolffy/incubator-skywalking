@@ -27,16 +27,24 @@ import org.slf4j.*;
  *
  * @author wu-sheng, peng-yongsheng
  */
-public abstract class ModuleDefine {
+public abstract class ModuleDefine implements ModuleProviderHolder {
 
     private static final Logger logger = LoggerFactory.getLogger(ModuleDefine.class);
 
-    private LinkedList<ModuleProvider> loadedProviders = new LinkedList<>();
+    private final LinkedList<ModuleProvider> loadedProviders = new LinkedList<>();
+
+    private final String name;
+
+    public ModuleDefine(String name) {
+        this.name = name;
+    }
 
     /**
      * @return the module name
      */
-    public abstract String name();
+    public final String name() {
+        return name;
+    }
 
     /**
      * @return the {@link Service} provided by this module.
@@ -68,7 +76,7 @@ public abstract class ModuleDefine {
                     throw new ProviderNotFoundException(e);
                 }
                 newProvider.setManager(moduleManager);
-                newProvider.setModule(this);
+                newProvider.setModuleDefine(this);
                 loadedProviders.add(newProvider);
             }
         }
@@ -90,6 +98,9 @@ public abstract class ModuleDefine {
 
     private void copyProperties(ModuleConfig dest, Properties src, String moduleName,
         String providerName) throws IllegalAccessException {
+        if (dest == null) {
+            return;
+        }
         Enumeration<?> propertyNames = src.propertyNames();
         while (propertyNames.hasMoreElements()) {
             String propertyName = (String)propertyNames.nextElement();
@@ -126,19 +137,13 @@ public abstract class ModuleDefine {
         return loadedProviders;
     }
 
-    public final ModuleProvider provider() throws DuplicateProviderException {
+    @Override public final ModuleProvider provider() throws DuplicateProviderException, ProviderNotFoundException {
         if (loadedProviders.size() > 1) {
             throw new DuplicateProviderException(this.name() + " module exist " + loadedProviders.size() + " providers");
+        } else if (loadedProviders.size() == 0) {
+            throw new ProviderNotFoundException("There is no module provider in " + this.name() + " module!");
         }
 
         return loadedProviders.getFirst();
-    }
-
-    public final <T extends Service> T getService(Class<T> serviceType) throws ServiceNotProvidedRuntimeException {
-        try {
-            return provider().getService(serviceType);
-        } catch (DuplicateProviderException | ServiceNotProvidedException e) {
-            throw new ServiceNotProvidedRuntimeException(e.getMessage());
-        }
     }
 }

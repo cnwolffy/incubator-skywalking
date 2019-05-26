@@ -24,7 +24,9 @@ import java.io.FileNotFoundException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.UnsupportedEncodingException;
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import org.apache.skywalking.apm.agent.core.boot.AgentPackageNotFoundException;
@@ -32,6 +34,7 @@ import org.apache.skywalking.apm.agent.core.boot.AgentPackagePath;
 import org.apache.skywalking.apm.agent.core.logging.api.ILog;
 import org.apache.skywalking.apm.agent.core.logging.api.LogManager;
 import org.apache.skywalking.apm.util.ConfigInitializer;
+import org.apache.skywalking.apm.util.PropertyPlaceholderHelper;
 import org.apache.skywalking.apm.util.StringUtil;
 
 /**
@@ -47,41 +50,98 @@ public class SnifferConfigInitializer {
     private static boolean IS_INIT_COMPLETED = false;
 
     /**
-     * If the specified agent config path is set, the agent will try to locate the specified agent config.
-     * If the specified agent config path is not set , the agent will try to locate `agent.config`, which should be in the /config dictionary of agent package.
+     * If the specified agent config path is set, the agent will try to locate the specified agent config. If the
+     * specified agent config path is not set , the agent will try to locate `agent.config`, which should be in the
+     * /config directory of agent package.
      * <p>
-     * Also try to override the config by system.env and system.properties. All the keys in these two places should
-     * start with {@link #ENV_KEY_PREFIX}. e.g. in env `skywalking.agent.application_code=yourAppName` to override
-     * `agent.application_code` in config file.
+     * Also try to override the config by system.properties. All the keys in this place should
+     * start with {@link #ENV_KEY_PREFIX}. e.g. in env `skywalking.agent.service_name=yourAppName` to override
+     * `agent.service_name` in config file.
      * <p>
-     * At the end, `agent.application_code` and `collector.servers` must be not blank.
+     * At the end, `agent.service_name` and `collector.servers` must not be blank.
      */
-    public static void initialize() throws ConfigNotFoundException, AgentPackageNotFoundException {
+    public static void initialize(String agentOptions) throws ConfigNotFoundException, AgentPackageNotFoundException {
         InputStreamReader configFileStream;
 
         try {
             configFileStream = loadConfig();
             Properties properties = new Properties();
             properties.load(configFileStream);
+            for (String key : properties.stringPropertyNames()) {
+                String value = (String)properties.get(key);
+                //replace the key's value. properties.replace(key,value) in jdk8+
+                properties.put(key, PropertyPlaceholderHelper.INSTANCE.replacePlaceholders(value, properties));
+            }
             ConfigInitializer.initialize(properties, Config.class);
         } catch (Exception e) {
             logger.error(e, "Failed to read the config file, skywalking is going to run in default config.");
         }
 
         try {
-            overrideConfigBySystemEnv();
+            overrideConfigBySystemProp();
         } catch (Exception e) {
-            logger.error(e, "Failed to read the system env.");
+            logger.error(e, "Failed to read the system properties.");
         }
 
-        if (StringUtil.isEmpty(Config.Agent.APPLICATION_CODE)) {
-            throw new ExceptionInInitializerError("`agent.application_code` is missing.");
+        if (!StringUtil.isEmpty(agentOptions)) {
+            try {
+                agentOptions = agentOptions.trim();
+                logger.info("Agent options is {}.", agentOptions);
+
+                overrideConfigByAgentOptions(agentOptions);
+            } catch (Exception e) {
+                logger.error(e, "Failed to parse the agent options, val is {}.", agentOptions);
+            }
+        }
+
+        if (StringUtil.isEmpty(Config.Agent.SERVICE_NAME)) {
+            throw new ExceptionInInitializerError("`agent.service_name` is missing.");
         }
         if (StringUtil.isEmpty(Config.Collector.BACKEND_SERVICE)) {
-            throw new ExceptionInInitializerError("`collector.direct_servers` and `collector.servers` cannot be empty at the same time.");
+            throw new ExceptionInInitializerError("`collector.backend_service` is missing.");
         }
 
         IS_INIT_COMPLETED = true;
+    }
+
+    private static void overrideConfigByAgentOptions(String agentOptions) throws IllegalAccessException {
+        Properties properties = new Properties();
+        for (List<String> terms : parseAgentOptions(agentOptions)) {
+            if (terms.size() != 2) {
+                throw new IllegalArgumentException("[" + terms + "] is not a key-value pair.");
+            }
+            properties.put(terms.get(0), terms.get(1));
+        }
+        if (!properties.isEmpty()) {
+            ConfigInitializer.initialize(properties, Config.class);
+        }
+    }
+
+    private static List<List<String>> parseAgentOptions(String agentOptions) {
+        List<List<String>> options = new ArrayList<List<String>>();
+        List<String> terms = new ArrayList<String>();
+        boolean isInQuotes = false;
+        StringBuilder currentTerm = new StringBuilder();
+        for (char c : agentOptions.toCharArray()) {
+            if (c == '\'' || c == '"') {
+                isInQuotes = !isInQuotes;
+            } else if (c == '=' && !isInQuotes) {   // key-value pair uses '=' as separator
+                terms.add(currentTerm.toString());
+                currentTerm = new StringBuilder();
+            } else if (c == ',' && !isInQuotes) {   // multiple options use ',' as separator
+                terms.add(currentTerm.toString());
+                currentTerm = new StringBuilder();
+
+                options.add(terms);
+                terms = new ArrayList<String>();
+            } else {
+                currentTerm.append(c);
+            }
+        }
+        // add the last term and option without separator
+        terms.add(currentTerm.toString());
+        options.add(terms);
+        return options;
     }
 
     public static boolean isInitCompleted() {
@@ -89,22 +149,21 @@ public class SnifferConfigInitializer {
     }
 
     /**
-     * Override the config by system env. The env key must start with `skywalking`, the reuslt should be as same as in
-     * `agent.config`
+     * Override the config by system properties. The property key must start with `skywalking`, the result should be as same
+     * as in `agent.config`
      * <p>
-     * such as:
-     * Env key of `agent.application_code` shoule be `skywalking.agent.application_code`
+     * such as: Property key of `agent.service_name` should be `skywalking.agent.service_name`
      *
-     * @return the config file {@link InputStream}, or null if not needEnhance.
      */
-    private static void overrideConfigBySystemEnv() throws IllegalAccessException {
+    private static void overrideConfigBySystemProp() throws IllegalAccessException {
         Properties properties = new Properties();
         Properties systemProperties = System.getProperties();
         Iterator<Map.Entry<Object, Object>> entryIterator = systemProperties.entrySet().iterator();
         while (entryIterator.hasNext()) {
             Map.Entry<Object, Object> prop = entryIterator.next();
-            if (prop.getKey().toString().startsWith(ENV_KEY_PREFIX)) {
-                String realKey = prop.getKey().toString().substring(ENV_KEY_PREFIX.length());
+            String key = prop.getKey().toString();
+            if (key.startsWith(ENV_KEY_PREFIX)) {
+                String realKey = key.substring(ENV_KEY_PREFIX.length());
                 properties.put(realKey, prop.getValue());
             }
         }
@@ -130,11 +189,11 @@ public class SnifferConfigInitializer {
 
                 return new InputStreamReader(new FileInputStream(configFile), "UTF-8");
             } catch (FileNotFoundException e) {
-                throw new ConfigNotFoundException("Fail to load agent.config", e);
+                throw new ConfigNotFoundException("Failed to load agent.config", e);
             } catch (UnsupportedEncodingException e) {
-                throw new ConfigReadFailedException("Fail to load agent.config", e);
+                throw new ConfigReadFailedException("Failed to load agent.config", e);
             }
         }
-        throw new ConfigNotFoundException("Fail to load agent config file.");
+        throw new ConfigNotFoundException("Failed to load agent.config.");
     }
 }

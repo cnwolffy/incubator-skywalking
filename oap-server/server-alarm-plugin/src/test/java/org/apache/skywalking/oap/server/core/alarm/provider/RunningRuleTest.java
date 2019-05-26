@@ -18,22 +18,14 @@
 
 package org.apache.skywalking.oap.server.core.alarm.provider;
 
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import org.apache.skywalking.oap.server.core.alarm.AlarmCallback;
-import org.apache.skywalking.oap.server.core.alarm.AlarmMessage;
-import org.apache.skywalking.oap.server.core.alarm.MetaInAlarm;
-import org.apache.skywalking.oap.server.core.analysis.indicator.Indicator;
-import org.apache.skywalking.oap.server.core.analysis.indicator.IntValueHolder;
+import java.util.*;
+import org.apache.skywalking.oap.server.core.alarm.*;
+import org.apache.skywalking.oap.server.core.analysis.metrics.*;
 import org.apache.skywalking.oap.server.core.remote.grpc.proto.RemoteData;
-import org.apache.skywalking.oap.server.core.source.Scope;
+import org.apache.skywalking.oap.server.core.source.DefaultScopeDefine;
 import org.joda.time.LocalDateTime;
-import org.joda.time.format.DateTimeFormat;
-import org.joda.time.format.DateTimeFormatter;
-import org.junit.Assert;
-import org.junit.Test;
+import org.joda.time.format.*;
+import org.junit.*;
 import org.powermock.reflect.Whitebox;
 
 /**
@@ -50,7 +42,7 @@ public class RunningRuleTest {
     public void testInitAndStart() {
         AlarmRule alarmRule = new AlarmRule();
         alarmRule.setAlarmRuleName("endpoint_percent_rule");
-        alarmRule.setIndicatorName("endpoint_percent");
+        alarmRule.setMetricsName("endpoint_percent");
         alarmRule.setOp("<");
         alarmRule.setThreshold("75");
         alarmRule.setCount(3);
@@ -59,29 +51,30 @@ public class RunningRuleTest {
         RunningRule runningRule = new RunningRule(alarmRule);
         LocalDateTime startTime = TIME_BUCKET_FORMATTER.parseLocalDateTime("201808301434");
         long timeInPeriod1 = 201808301434L;
-        runningRule.in(getMetaInAlarm(123), getIndicator(timeInPeriod1, 70));
+        runningRule.in(getMetaInAlarm(123), getMetrics(timeInPeriod1, 70));
 
         Map<MetaInAlarm, RunningRule.Window> windows = Whitebox.getInternalState(runningRule, "windows");
 
         RunningRule.Window window = windows.get(getMetaInAlarm(123));
         LocalDateTime endTime = Whitebox.getInternalState(window, "endTime");
         int period = Whitebox.getInternalState(window, "period");
-        LinkedList<Indicator> indicatorBuffer = Whitebox.getInternalState(window, "values");
+        LinkedList<Metrics> metricsBuffer = Whitebox.getInternalState(window, "values");
 
         Assert.assertTrue(startTime.equals(endTime));
         Assert.assertEquals(15, period);
-        Assert.assertEquals(15, indicatorBuffer.size());
+        Assert.assertEquals(15, metricsBuffer.size());
     }
 
     @Test
     public void testAlarm() {
         AlarmRule alarmRule = new AlarmRule();
         alarmRule.setAlarmRuleName("endpoint_percent_rule");
-        alarmRule.setIndicatorName("endpoint_percent");
+        alarmRule.setMetricsName("endpoint_percent");
         alarmRule.setOp("<");
         alarmRule.setThreshold("75");
         alarmRule.setCount(3);
         alarmRule.setPeriod(15);
+        alarmRule.setMessage("Successful rate of endpoint {name} is lower than 75%");
 
         RunningRule runningRule = new RunningRule(alarmRule);
         LocalDateTime startTime = TIME_BUCKET_FORMATTER.parseLocalDateTime("201808301440");
@@ -90,26 +83,29 @@ public class RunningRuleTest {
         long timeInPeriod2 = 201808301436L;
         long timeInPeriod3 = 201808301438L;
 
-        runningRule.in(getMetaInAlarm(123), getIndicator(timeInPeriod1, 70));
-        runningRule.in(getMetaInAlarm(123), getIndicator(timeInPeriod2, 71));
-        runningRule.in(getMetaInAlarm(123), getIndicator(timeInPeriod3, 74));
+        runningRule.in(getMetaInAlarm(123), getMetrics(timeInPeriod1, 70));
+        runningRule.in(getMetaInAlarm(123), getMetrics(timeInPeriod2, 71));
+        runningRule.in(getMetaInAlarm(123), getMetrics(timeInPeriod3, 74));
 
         // check at 201808301440
-        Assert.assertEquals(0, runningRule.check().size());
+        List<AlarmMessage> alarmMessages = runningRule.check();
+        Assert.assertEquals(0, alarmMessages.size());
         runningRule.moveTo(TIME_BUCKET_FORMATTER.parseLocalDateTime("201808301441"));
         // check at 201808301441
-        Assert.assertEquals(0, runningRule.check().size());
+        alarmMessages = runningRule.check();
+        Assert.assertEquals(0, alarmMessages.size());
         runningRule.moveTo(TIME_BUCKET_FORMATTER.parseLocalDateTime("201808301442"));
         // check at 201808301442
-        Assert.assertEquals(1, runningRule.check().size());
-
+        alarmMessages = runningRule.check();
+        Assert.assertEquals(1, alarmMessages.size());
+        Assert.assertEquals("Successful rate of endpoint Service_123 is lower than 75%", alarmMessages.get(0).getAlarmMessage());
     }
 
     @Test
     public void testNoAlarm() {
         AlarmRule alarmRule = new AlarmRule();
         alarmRule.setAlarmRuleName("endpoint_percent_rule");
-        alarmRule.setIndicatorName("endpoint_percent");
+        alarmRule.setMetricsName("endpoint_percent");
         alarmRule.setOp(">");
         alarmRule.setThreshold("75");
         alarmRule.setCount(3);
@@ -133,11 +129,11 @@ public class RunningRuleTest {
         long timeInPeriod3 = 201808301438L;
         long timeInPeriod4 = 201808301432L;
         long timeInPeriod5 = 201808301440L;
-        runningRule.in(getMetaInAlarm(123), getIndicator(timeInPeriod1, 70));
-        runningRule.in(getMetaInAlarm(123), getIndicator(timeInPeriod2, 71));
-        runningRule.in(getMetaInAlarm(123), getIndicator(timeInPeriod3, 74));
-        runningRule.in(getMetaInAlarm(123), getIndicator(timeInPeriod4, 90));
-        runningRule.in(getMetaInAlarm(123), getIndicator(timeInPeriod5, 95));
+        runningRule.in(getMetaInAlarm(123), getMetrics(timeInPeriod1, 70));
+        runningRule.in(getMetaInAlarm(123), getMetrics(timeInPeriod2, 71));
+        runningRule.in(getMetaInAlarm(123), getMetrics(timeInPeriod3, 74));
+        runningRule.in(getMetaInAlarm(123), getMetrics(timeInPeriod4, 90));
+        runningRule.in(getMetaInAlarm(123), getMetrics(timeInPeriod5, 95));
 
         // check at 201808301440
         Assert.assertEquals(0, runningRule.check().size());
@@ -153,7 +149,7 @@ public class RunningRuleTest {
     public void testSilence() {
         AlarmRule alarmRule = new AlarmRule();
         alarmRule.setAlarmRuleName("endpoint_percent_rule");
-        alarmRule.setIndicatorName("endpoint_percent");
+        alarmRule.setMetricsName("endpoint_percent");
         alarmRule.setOp("<");
         alarmRule.setThreshold("75");
         alarmRule.setCount(3);
@@ -165,15 +161,15 @@ public class RunningRuleTest {
         long timeInPeriod1 = 201808301434L;
         long timeInPeriod2 = 201808301436L;
         long timeInPeriod3 = 201808301438L;
-        runningRule.in(getMetaInAlarm(123), getIndicator(timeInPeriod1, 70));
-        runningRule.in(getMetaInAlarm(123), getIndicator(timeInPeriod2, 71));
-        runningRule.in(getMetaInAlarm(123), getIndicator(timeInPeriod3, 74));
+        runningRule.in(getMetaInAlarm(123), getMetrics(timeInPeriod1, 70));
+        runningRule.in(getMetaInAlarm(123), getMetrics(timeInPeriod2, 71));
+        runningRule.in(getMetaInAlarm(123), getMetrics(timeInPeriod3, 74));
 
         // check at 201808301440
         Assert.assertEquals(0, runningRule.check().size()); //check matches, no alarm
         runningRule.moveTo(TIME_BUCKET_FORMATTER.parseLocalDateTime("201808301441"));
         // check at 201808301441
-        Assert.assertEquals(0,  runningRule.check().size()); //check matches, no alarm
+        Assert.assertEquals(0, runningRule.check().size()); //check matches, no alarm
         runningRule.moveTo(TIME_BUCKET_FORMATTER.parseLocalDateTime("201808301442"));
         // check at 201808301442
         Assert.assertNotEquals(0, runningRule.check().size()); //alarm
@@ -187,15 +183,15 @@ public class RunningRuleTest {
 
     private MetaInAlarm getMetaInAlarm(int id) {
         return new MetaInAlarm() {
-            @Override public Scope getScope() {
-                return Scope.Service;
+            @Override public int getScopeId() {
+                return DefaultScopeDefine.SERVICE;
             }
 
             @Override public String getName() {
                 return "Service_" + id;
             }
 
-            @Override public String getIndicatorName() {
+            @Override public String getMetricsName() {
                 return "endpoint_percent";
             }
 
@@ -218,26 +214,38 @@ public class RunningRuleTest {
         };
     }
 
-    private Indicator getIndicator(long timebucket, int value) {
-        MockIndicator indicator = new MockIndicator();
-        indicator.setValue(value);
-        indicator.setTimeBucket(timebucket);
-        return indicator;
+    private Metrics getMetrics(long timeBucket, int value) {
+        MockMetrics mockMetrics = new MockMetrics();
+        mockMetrics.setValue(value);
+        mockMetrics.setTimeBucket(timeBucket);
+        return mockMetrics;
     }
 
-    private class MockIndicator extends Indicator implements IntValueHolder {
+    private class MockMetrics extends Metrics implements IntValueHolder {
         private int value;
 
         @Override public String id() {
             return null;
         }
 
-        @Override public void combine(Indicator indicator) {
+        @Override public void combine(Metrics metrics) {
 
         }
 
         @Override public void calculate() {
 
+        }
+
+        @Override public Metrics toHour() {
+            return null;
+        }
+
+        @Override public Metrics toDay() {
+            return null;
+        }
+
+        @Override public Metrics toMonth() {
+            return null;
         }
 
         @Override public int getValue() {
@@ -254,6 +262,10 @@ public class RunningRuleTest {
 
         public void setValue(int value) {
             this.value = value;
+        }
+
+        @Override public int remoteHashCode() {
+            return 0;
         }
     }
 }

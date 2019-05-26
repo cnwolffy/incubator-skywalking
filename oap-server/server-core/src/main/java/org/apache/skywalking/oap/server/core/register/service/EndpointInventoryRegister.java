@@ -18,11 +18,13 @@
 
 package org.apache.skywalking.oap.server.core.register.service;
 
+import java.util.Objects;
 import org.apache.skywalking.oap.server.core.*;
 import org.apache.skywalking.oap.server.core.cache.EndpointInventoryCache;
 import org.apache.skywalking.oap.server.core.register.EndpointInventory;
-import org.apache.skywalking.oap.server.core.register.worker.InventoryProcess;
-import org.apache.skywalking.oap.server.library.module.ModuleManager;
+import org.apache.skywalking.oap.server.core.register.worker.InventoryStreamProcessor;
+import org.apache.skywalking.oap.server.core.source.DetectPoint;
+import org.apache.skywalking.oap.server.library.module.ModuleDefineHolder;
 import org.slf4j.*;
 
 import static java.util.Objects.isNull;
@@ -34,39 +36,50 @@ public class EndpointInventoryRegister implements IEndpointInventoryRegister {
 
     private static final Logger logger = LoggerFactory.getLogger(EndpointInventoryRegister.class);
 
-    private final ModuleManager moduleManager;
+    private final ModuleDefineHolder moduleDefineHolder;
     private EndpointInventoryCache cacheService;
 
-    public EndpointInventoryRegister(ModuleManager moduleManager) {
-        this.moduleManager = moduleManager;
+    public EndpointInventoryRegister(ModuleDefineHolder moduleDefineHolder) {
+        this.moduleDefineHolder = moduleDefineHolder;
     }
 
     private EndpointInventoryCache getCacheService() {
         if (isNull(cacheService)) {
-            cacheService = moduleManager.find(CoreModule.NAME).getService(EndpointInventoryCache.class);
+            cacheService = moduleDefineHolder.find(CoreModule.NAME).provider().getService(EndpointInventoryCache.class);
         }
         return cacheService;
     }
 
-    @Override public int getOrCreate(int serviceId, String endpointName, int detectPoint) {
-        int endpointId = getCacheService().getEndpointId(serviceId, endpointName);
+    @Override public int getOrCreate(int serviceId, String endpointName, DetectPoint detectPoint) {
+        int endpointId = getCacheService().getEndpointId(serviceId, endpointName, detectPoint.ordinal());
 
         if (endpointId == Const.NONE) {
             EndpointInventory endpointInventory = new EndpointInventory();
             endpointInventory.setServiceId(serviceId);
             endpointInventory.setName(endpointName);
-            endpointInventory.setDetectPoint(detectPoint);
+            endpointInventory.setDetectPoint(detectPoint.ordinal());
 
             long now = System.currentTimeMillis();
             endpointInventory.setRegisterTime(now);
             endpointInventory.setHeartbeatTime(now);
 
-            InventoryProcess.INSTANCE.in(endpointInventory);
+            InventoryStreamProcessor.getInstance().in(endpointInventory);
         }
         return endpointId;
     }
 
-    @Override public int get(int serviceId, String endpointName) {
-        return getCacheService().getEndpointId(serviceId, endpointName);
+    @Override public int get(int serviceId, String endpointName, int detectPoint) {
+        return getCacheService().getEndpointId(serviceId, endpointName, detectPoint);
+    }
+
+    @Override public void heartbeat(int endpointId, long heartBeatTime) {
+        EndpointInventory endpointInventory = getCacheService().get(endpointId);
+        if (Objects.nonNull(endpointInventory)) {
+            endpointInventory.setHeartbeatTime(heartBeatTime);
+
+            InventoryStreamProcessor.getInstance().in(endpointInventory);
+        } else {
+            logger.warn("Endpoint {} heartbeat, but not found in storage.", endpointId);
+        }
     }
 }

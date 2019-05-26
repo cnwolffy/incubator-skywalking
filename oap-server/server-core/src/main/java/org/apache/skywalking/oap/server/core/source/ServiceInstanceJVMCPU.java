@@ -19,20 +19,26 @@
 package org.apache.skywalking.oap.server.core.source;
 
 import lombok.*;
-import org.apache.skywalking.oap.server.core.source.annotation.SourceType;
+
+import static org.apache.skywalking.oap.server.core.source.DefaultScopeDefine.SERVICE_INSTANCE_CATALOG_NAME;
+import static org.apache.skywalking.oap.server.core.source.DefaultScopeDefine.SERVICE_INSTANCE_JVM_CPU;
 
 /**
  * @author peng-yongsheng
  */
-@SourceType
+@ScopeDeclaration(id = SERVICE_INSTANCE_JVM_CPU, name = "ServiceInstanceJVMCPU", catalog = SERVICE_INSTANCE_CATALOG_NAME)
 public class ServiceInstanceJVMCPU extends Source {
-    @Override public Scope scope() {
-        return Scope.ServiceInstanceJVMCPU;
+    @Override public int scope() {
+        return DefaultScopeDefine.SERVICE_INSTANCE_JVM_CPU;
+    }
+
+    @Override public String getEntityId() {
+        return String.valueOf(id);
     }
 
     @Getter @Setter private int id;
     @Getter @Setter private String name;
     @Getter @Setter private String serviceName;
-    @Getter @Setter private int serviceInstanceId;
+    @Getter @Setter private int serviceId;
     @Getter @Setter private double usePercent;
 }

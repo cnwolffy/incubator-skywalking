@@ -2,6 +2,12 @@
 First and most important thing is, SkyWalking backend startup behaviours are driven by `config/application.yml`.
 Understood the setting file will help you to read this document.
 
+## Startup script
+The default startup scripts are `/bin/oapService.sh`(.bat). 
+Read [start up mode](backend-start-up-mode.md) document to know other options
+of starting backend.
+
+
 ## application.yml
 The core concept behind this setting file is, SkyWalking collector is based on pure modulization design. 
 End user can switch or assemble the collector features by their own requirements.
@@ -49,7 +55,10 @@ read **Set receivers** document in the [link list](#advanced-feature-document-li
 After understand the setting file structure, you could choose your interesting feature document.
 We recommend you to read the feature documents in our following order.
 
+1. [Overriding settings](backend-setting-override.md) in application.yml is supported
 1. [IP and port setting](backend-ip-port.md). Introduce how IP and port set and be used.
+1. [Backend init mode startup](backend-init-mode.md). How to init the environment and exit graciously.
+Read this before you try to initial a new cluster.
 1. [Cluster management](backend-cluster.md). Guide you to set backend server in cluster mode.
 1. [Deploy in kubernetes](backend-k8s.md). Guide you to build and use SkyWalking image, and deploy in k8s.
 1. [Choose storage](backend-storage.md). As we know, in default quick start, backend is running with H2
@@ -57,8 +66,35 @@ DB. But clearly, it doesn't fit the product env. In here, you could find what ot
 Choose the one you like, we are also welcome anyone to contribute new storage implementor,
 1. [Set receivers](backend-receivers.md). You could choose receivers by your requirements, most receivers
 are harmless, at least our default receivers are. You would set and active all receivers provided.
+1. Do [trace sampling](trace-sampling.md) at backend. This sample keep the metrics accurate, only don't save some of traces
+in storage based on rate.
+1. Follow [slow DB statement threshold](slow-db-statement.md) config document to understand that, 
+how to detect the Slow database statements(including SQL statements) in your system.
 1. Official [OAL scripts](../../guides/backend-oal-scripts.md). As you known from our [OAL introduction](../../concepts-and-designs/oal.md),
 most of backend analysis capabilities based on the scripts. Here is the description of official scripts,
-which helps you to understand which metric data are in process, also could be used in alarm.
+which helps you to understand which metrics data are in process, also could be used in alarm.
 1. [Alarm](backend-alarm.md). Alarm provides a time-series based check mechanism. You could set alarm 
-rules targeting the analysis oal metric objects.
+rules targeting the analysis oal metrics objects.
+1. [Advanced deployment options](advanced-deployment.md). If you want to deploy backend in very large
+scale and support high payload, you may need this. 
+1. [Metrics exporter](metrics-exporter.md). Use metrics data exporter to forward metrics data to 3rd party
+system.
+1. [Time To Live (TTL)](ttl.md). Metrics and trace are time series data, they would be saved forever, you could 
+set the expired time for each dimension.
+
+## Telemetry for backend
+OAP backend cluster itself underlying is a distributed streaming process system. For helping the Ops team,
+we provide the telemetry for OAP backend itself. Follow [document](backend-telemetry.md) to use it.
+
+
+## FAQs
+#### When and why do we need to set Timezone?
+SkyWalking provides downsampling time series metrics features. 
+Query and storage at each time dimension(minute, hour, day, month metrics indexes)
+related to timezone when doing time format. 
+
+For example, metrics time will be formatted like YYYYMMDDHHmm in minute dimension metrics,
+which format process is timezone related.
+  
+In default, SkyWalking OAP backend choose the OS default timezone.
+If you want to override it, please follow Java and OS documents to do so.

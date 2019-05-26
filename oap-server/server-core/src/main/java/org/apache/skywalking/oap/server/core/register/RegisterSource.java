@@ -29,16 +29,19 @@ import org.apache.skywalking.oap.server.core.storage.annotation.Column;
 public abstract class RegisterSource extends StreamData implements StorageData {
 
     public static final String SEQUENCE = "sequence";
-    protected static final String REGISTER_TIME = "register_time";
-    protected static final String HEARTBEAT_TIME = "heartbeat_time";
+    public static final String REGISTER_TIME = "register_time";
+    public static final String HEARTBEAT_TIME = "heartbeat_time";
 
     @Getter @Setter @Column(columnName = SEQUENCE) private int sequence;
     @Getter @Setter @Column(columnName = REGISTER_TIME) private long registerTime;
     @Getter @Setter @Column(columnName = HEARTBEAT_TIME) private long heartbeatTime;
 
-    public final void combine(RegisterSource registerSource) {
+    public boolean combine(RegisterSource registerSource) {
         if (heartbeatTime < registerSource.getHeartbeatTime()) {
             heartbeatTime = registerSource.getHeartbeatTime();
+            return true;
+        } else {
+            return false;
         }
     }
 }

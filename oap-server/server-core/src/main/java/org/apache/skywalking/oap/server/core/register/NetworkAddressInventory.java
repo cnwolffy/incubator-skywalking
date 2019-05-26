@@ -21,26 +21,38 @@ package org.apache.skywalking.oap.server.core.register;
 import java.util.*;
 import lombok.*;
 import org.apache.skywalking.oap.server.core.Const;
-import org.apache.skywalking.oap.server.core.register.annotation.InventoryType;
-import org.apache.skywalking.oap.server.core.remote.annotation.StreamData;
+import org.apache.skywalking.oap.server.core.analysis.Stream;
+import org.apache.skywalking.oap.server.core.register.worker.InventoryStreamProcessor;
 import org.apache.skywalking.oap.server.core.remote.grpc.proto.RemoteData;
-import org.apache.skywalking.oap.server.core.source.Scope;
+import org.apache.skywalking.oap.server.core.source.*;
 import org.apache.skywalking.oap.server.core.storage.StorageBuilder;
 import org.apache.skywalking.oap.server.core.storage.annotation.*;
+import org.elasticsearch.common.Strings;
+
+import static org.apache.skywalking.oap.server.core.source.DefaultScopeDefine.NETWORK_ADDRESS;
 
 /**
  * @author peng-yongsheng
  */
-@InventoryType(scope = Scope.NetworkAddress)
-@StreamData
-@StorageEntity(name = NetworkAddressInventory.MODEL_NAME, builder = NetworkAddressInventory.Builder.class)
+@ScopeDeclaration(id = NETWORK_ADDRESS, name = "NetworkAddress")
+@Stream(name = NetworkAddressInventory.INDEX_NAME, scopeId = DefaultScopeDefine.NETWORK_ADDRESS, storage = @Storage(builder = NetworkAddressInventory.Builder.class, deleteHistory = false), processor = InventoryStreamProcessor.class)
 public class NetworkAddressInventory extends RegisterSource {
 
-    public static final String MODEL_NAME = "network_address_inventory";
+    public static final String INDEX_NAME = "network_address_inventory";
 
     private static final String NAME = "name";
+    private static final String NODE_TYPE = "node_type";
 
     @Setter @Getter @Column(columnName = NAME, matchQuery = true) private String name = Const.EMPTY_STRING;
+    @Setter(AccessLevel.PRIVATE) @Getter(AccessLevel.PRIVATE) @Column(columnName = NODE_TYPE) private int nodeType;
+
+    public void setNetworkAddressNodeType(NodeType nodeType) {
+        this.nodeType = nodeType.value();
+    }
+
+    public NodeType getNetworkAddressNodeType() {
+        return NodeType.get(this.nodeType);
+    }
 
     public static String buildId(String networkAddress) {
         return networkAddress;
@@ -65,30 +77,59 @@ public class NetworkAddressInventory extends RegisterSource {
             return false;
 
         NetworkAddressInventory source = (NetworkAddressInventory)obj;
-        if (name.equals(source.getName()))
+        if (!name.equals(source.getName()))
             return false;
 
         return true;
     }
 
+    public NetworkAddressInventory getClone() {
+        NetworkAddressInventory inventory = new NetworkAddressInventory();
+        inventory.setSequence(getSequence());
+        inventory.setRegisterTime(getRegisterTime());
+        inventory.setHeartbeatTime(getHeartbeatTime());
+        inventory.setName(name);
+        inventory.setNodeType(nodeType);
+
+        return inventory;
+    }
+
+    @Override public boolean combine(RegisterSource registerSource) {
+        boolean isCombine = super.combine(registerSource);
+        NetworkAddressInventory inventory = (NetworkAddressInventory)registerSource;
+
+        if (nodeType != inventory.nodeType) {
+            setNodeType(inventory.nodeType);
+            return true;
+        } else {
+            return isCombine;
+        }
+    }
+
     @Override public RemoteData.Builder serialize() {
         RemoteData.Builder remoteBuilder = RemoteData.newBuilder();
-        remoteBuilder.setDataIntegers(0, getSequence());
+        remoteBuilder.addDataIntegers(getSequence());
+        remoteBuilder.addDataIntegers(getNodeType());
 
-        remoteBuilder.setDataLongs(0, getRegisterTime());
-        remoteBuilder.setDataLongs(1, getHeartbeatTime());
+        remoteBuilder.addDataLongs(getRegisterTime());
+        remoteBuilder.addDataLongs(getHeartbeatTime());
 
-        remoteBuilder.setDataStrings(0, name);
+        remoteBuilder.addDataStrings(Strings.isNullOrEmpty(name) ? Const.EMPTY_STRING : name);
         return remoteBuilder;
     }
 
     @Override public void deserialize(RemoteData remoteData) {
         setSequence(remoteData.getDataIntegers(0));
+        setNodeType(remoteData.getDataIntegers(1));
 
         setRegisterTime(remoteData.getDataLongs(0));
         setHeartbeatTime(remoteData.getDataLongs(1));
 
         setName(remoteData.getDataStrings(0));
+    }
+
+    @Override public int remoteHashCode() {
+        return 0;
     }
 
     public static class Builder implements StorageBuilder<NetworkAddressInventory> {
@@ -97,6 +138,7 @@ public class NetworkAddressInventory extends RegisterSource {
             NetworkAddressInventory inventory = new NetworkAddressInventory();
             inventory.setSequence((Integer)dbMap.get(SEQUENCE));
             inventory.setName((String)dbMap.get(NAME));
+            inventory.setNodeType((Integer)dbMap.get(NODE_TYPE));
             inventory.setRegisterTime((Long)dbMap.get(REGISTER_TIME));
             inventory.setHeartbeatTime((Long)dbMap.get(HEARTBEAT_TIME));
             return inventory;
@@ -106,6 +148,7 @@ public class NetworkAddressInventory extends RegisterSource {
             Map<String, Object> map = new HashMap<>();
             map.put(SEQUENCE, storageData.getSequence());
             map.put(NAME, storageData.getName());
+            map.put(NODE_TYPE, storageData.getNodeType());
             map.put(REGISTER_TIME, storageData.getRegisterTime());
             map.put(HEARTBEAT_TIME, storageData.getHeartbeatTime());
             return map;

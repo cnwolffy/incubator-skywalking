@@ -21,43 +21,46 @@ package org.apache.skywalking.oap.server.core.register;
 import java.util.*;
 import lombok.*;
 import org.apache.skywalking.oap.server.core.Const;
-import org.apache.skywalking.oap.server.core.register.annotation.InventoryType;
-import org.apache.skywalking.oap.server.core.remote.annotation.StreamData;
+import org.apache.skywalking.oap.server.core.analysis.Stream;
+import org.apache.skywalking.oap.server.core.register.worker.InventoryStreamProcessor;
 import org.apache.skywalking.oap.server.core.remote.grpc.proto.RemoteData;
-import org.apache.skywalking.oap.server.core.source.Scope;
+import org.apache.skywalking.oap.server.core.source.*;
 import org.apache.skywalking.oap.server.core.storage.StorageBuilder;
 import org.apache.skywalking.oap.server.core.storage.annotation.*;
+import org.elasticsearch.common.Strings;
+
+import static org.apache.skywalking.oap.server.core.source.DefaultScopeDefine.ENDPOINT_INVENTORY;
 
 /**
  * @author peng-yongsheng
  */
-@InventoryType(scope = Scope.Endpoint)
-@StreamData
-@StorageEntity(name = EndpointInventory.MODEL_NAME, builder = EndpointInventory.Builder.class)
+@ScopeDeclaration(id = ENDPOINT_INVENTORY, name = "EndpointInventory")
+@Stream(name = EndpointInventory.INDEX_NAME, scopeId = DefaultScopeDefine.ENDPOINT_INVENTORY, storage = @Storage(builder = EndpointInventory.Builder.class, deleteHistory = false), processor = InventoryStreamProcessor.class)
 public class EndpointInventory extends RegisterSource {
 
-    public static final String MODEL_NAME = "endpoint_inventory";
+    public static final String INDEX_NAME = "endpoint_inventory";
 
-    private static final String SERVICE_ID = "service_id";
-    private static final String NAME = "name";
-    private static final String DETECT_POINT = "detect_point";
+    public static final String SERVICE_ID = "service_id";
+    public static final String NAME = "name";
+    public static final String DETECT_POINT = "detect_point";
 
     @Setter @Getter @Column(columnName = SERVICE_ID) private int serviceId;
     @Setter @Getter @Column(columnName = NAME, matchQuery = true) private String name = Const.EMPTY_STRING;
     @Setter @Getter @Column(columnName = DETECT_POINT) private int detectPoint;
 
-    public static String buildId(int serviceId, String endpointName) {
-        return serviceId + Const.ID_SPLIT + endpointName;
+    public static String buildId(int serviceId, String endpointName, int detectPoint) {
+        return serviceId + Const.ID_SPLIT + endpointName + Const.ID_SPLIT + detectPoint;
     }
 
     @Override public String id() {
-        return buildId(serviceId, name);
+        return buildId(serviceId, name, detectPoint);
     }
 
     @Override public int hashCode() {
         int result = 17;
         result = 31 * result + serviceId;
         result = 31 * result + name.hashCode();
+        result = 31 * result + detectPoint;
         return result;
     }
 
@@ -72,7 +75,9 @@ public class EndpointInventory extends RegisterSource {
         EndpointInventory source = (EndpointInventory)obj;
         if (serviceId != source.getServiceId())
             return false;
-        if (name.equals(source.getName()))
+        if (!name.equals(source.getName()))
+            return false;
+        if (detectPoint != source.getDetectPoint())
             return false;
 
         return true;
@@ -80,14 +85,14 @@ public class EndpointInventory extends RegisterSource {
 
     @Override public RemoteData.Builder serialize() {
         RemoteData.Builder remoteBuilder = RemoteData.newBuilder();
-        remoteBuilder.setDataIntegers(0, getSequence());
-        remoteBuilder.setDataIntegers(1, serviceId);
-        remoteBuilder.setDataIntegers(2, detectPoint);
+        remoteBuilder.addDataIntegers(getSequence());
+        remoteBuilder.addDataIntegers(serviceId);
+        remoteBuilder.addDataIntegers(detectPoint);
 
-        remoteBuilder.setDataLongs(0, getRegisterTime());
-        remoteBuilder.setDataLongs(1, getHeartbeatTime());
+        remoteBuilder.addDataLongs(getRegisterTime());
+        remoteBuilder.addDataLongs(getHeartbeatTime());
 
-        remoteBuilder.setDataStrings(0, name);
+        remoteBuilder.addDataStrings(Strings.isNullOrEmpty(name) ? Const.EMPTY_STRING : name);
         return remoteBuilder;
     }
 
@@ -100,6 +105,10 @@ public class EndpointInventory extends RegisterSource {
         setHeartbeatTime(remoteData.getDataLongs(1));
 
         setName(remoteData.getDataStrings(0));
+    }
+
+    @Override public int remoteHashCode() {
+        return 0;
     }
 
     public static class Builder implements StorageBuilder<EndpointInventory> {

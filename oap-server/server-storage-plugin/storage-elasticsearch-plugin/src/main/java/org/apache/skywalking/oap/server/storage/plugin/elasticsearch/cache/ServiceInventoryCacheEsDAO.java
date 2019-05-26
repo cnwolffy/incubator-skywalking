@@ -18,14 +18,16 @@
 
 package org.apache.skywalking.oap.server.storage.plugin.elasticsearch.cache;
 
+import java.util.*;
 import org.apache.skywalking.oap.server.core.Const;
 import org.apache.skywalking.oap.server.core.register.*;
 import org.apache.skywalking.oap.server.core.storage.cache.IServiceInventoryCacheDAO;
 import org.apache.skywalking.oap.server.library.client.elasticsearch.ElasticSearchClient;
+import org.apache.skywalking.oap.server.library.util.BooleanUtils;
 import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.EsDAO;
 import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.action.search.SearchResponse;
-import org.elasticsearch.index.query.QueryBuilders;
+import org.elasticsearch.index.query.*;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.slf4j.*;
@@ -55,14 +57,14 @@ public class ServiceInventoryCacheEsDAO extends EsDAO implements IServiceInvento
 
     private int get(String id) {
         try {
-            GetResponse response = getClient().get(ServiceInventory.MODEL_NAME, id);
+            GetResponse response = getClient().get(ServiceInventory.INDEX_NAME, id);
             if (response.isExists()) {
                 return (int)response.getSource().getOrDefault(RegisterSource.SEQUENCE, 0);
             } else {
                 return Const.NONE;
             }
-        } catch (Throwable e) {
-            logger.error(e.getMessage());
+        } catch (Throwable t) {
+            logger.error(t.getMessage(), t);
             return Const.NONE;
         }
     }
@@ -73,16 +75,41 @@ public class ServiceInventoryCacheEsDAO extends EsDAO implements IServiceInvento
             searchSourceBuilder.query(QueryBuilders.termQuery(ServiceInventory.SEQUENCE, serviceId));
             searchSourceBuilder.size(1);
 
-            SearchResponse response = getClient().search(ServiceInventory.MODEL_NAME, searchSourceBuilder);
+            SearchResponse response = getClient().search(ServiceInventory.INDEX_NAME, searchSourceBuilder);
             if (response.getHits().totalHits == 1) {
                 SearchHit searchHit = response.getHits().getAt(0);
                 return builder.map2Data(searchHit.getSourceAsMap());
             } else {
                 return null;
             }
-        } catch (Throwable e) {
-            logger.error(e.getMessage());
+        } catch (Throwable t) {
+            logger.error(t.getMessage(), t);
             return null;
         }
+    }
+
+    @Override public List<ServiceInventory> loadLastMappingUpdate() {
+        List<ServiceInventory> serviceInventories = new ArrayList<>();
+
+        try {
+            SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
+
+            BoolQueryBuilder boolQuery = QueryBuilders.boolQuery();
+            boolQuery.must().add(QueryBuilders.termQuery(ServiceInventory.IS_ADDRESS, BooleanUtils.TRUE));
+            boolQuery.must().add(QueryBuilders.rangeQuery(ServiceInventory.MAPPING_LAST_UPDATE_TIME).gte(System.currentTimeMillis() - 30 * 60 * 1000));
+
+            searchSourceBuilder.query(boolQuery);
+            searchSourceBuilder.size(50);
+
+            SearchResponse response = getClient().search(ServiceInventory.INDEX_NAME, searchSourceBuilder);
+
+            for (SearchHit searchHit : response.getHits().getHits()) {
+                serviceInventories.add(this.builder.map2Data(searchHit.getSourceAsMap()));
+            }
+        } catch (Throwable t) {
+            logger.error(t.getMessage(), t);
+        }
+
+        return serviceInventories;
     }
 }

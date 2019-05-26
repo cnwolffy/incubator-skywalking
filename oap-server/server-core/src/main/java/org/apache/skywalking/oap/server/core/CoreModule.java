@@ -20,13 +20,16 @@ package org.apache.skywalking.oap.server.core;
 
 import java.util.*;
 import org.apache.skywalking.oap.server.core.cache.*;
+import org.apache.skywalking.oap.server.core.config.*;
+import org.apache.skywalking.oap.server.core.query.*;
 import org.apache.skywalking.oap.server.core.register.service.*;
 import org.apache.skywalking.oap.server.core.remote.RemoteSenderService;
-import org.apache.skywalking.oap.server.core.remote.annotation.StreamDataClassGetter;
 import org.apache.skywalking.oap.server.core.remote.client.RemoteClientManager;
+import org.apache.skywalking.oap.server.core.remote.define.*;
 import org.apache.skywalking.oap.server.core.server.*;
 import org.apache.skywalking.oap.server.core.source.SourceReceiver;
-import org.apache.skywalking.oap.server.core.storage.model.IModelGetter;
+import org.apache.skywalking.oap.server.core.storage.model.*;
+import org.apache.skywalking.oap.server.core.worker.*;
 import org.apache.skywalking.oap.server.library.module.ModuleDefine;
 
 /**
@@ -36,19 +39,38 @@ public class CoreModule extends ModuleDefine {
 
     public static final String NAME = "core";
 
-    @Override public String name() {
-        return NAME;
+    public CoreModule() {
+        super(NAME);
     }
 
     @Override public Class[] services() {
         List<Class> classes = new ArrayList<>();
+        classes.add(ConfigService.class);
+        classes.add(DownsamplingConfigService.class);
+        classes.add(IComponentLibraryCatalogService.class);
+
+        classes.add(IWorkerInstanceGetter.class);
+        classes.add(IWorkerInstanceSetter.class);
+
         addServerInterface(classes);
         addReceiverInterface(classes);
         addInsideService(classes);
         addRegisterService(classes);
         addCacheService(classes);
+        addQueryService(classes);
 
         return classes.toArray(new Class[] {});
+    }
+
+    private void addQueryService(List<Class> classes) {
+        classes.add(TopologyQueryService.class);
+        classes.add(MetricQueryService.class);
+        classes.add(TraceQueryService.class);
+        classes.add(LogQueryService.class);
+        classes.add(MetadataQueryService.class);
+        classes.add(AggregationQueryService.class);
+        classes.add(AlarmQueryService.class);
+        classes.add(TopNRecordsQueryService.class);
     }
 
     private void addServerInterface(List<Class> classes) {
@@ -57,8 +79,11 @@ public class CoreModule extends ModuleDefine {
     }
 
     private void addInsideService(List<Class> classes) {
+        classes.add(IModelSetter.class);
         classes.add(IModelGetter.class);
-        classes.add(StreamDataClassGetter.class);
+        classes.add(IModelOverride.class);
+        classes.add(StreamDataMappingGetter.class);
+        classes.add(StreamDataMappingSetter.class);
         classes.add(RemoteClientManager.class);
         classes.add(RemoteSenderService.class);
     }

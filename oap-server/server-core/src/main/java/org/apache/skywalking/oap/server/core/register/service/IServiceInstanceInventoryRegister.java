@@ -18,7 +18,7 @@
 
 package org.apache.skywalking.oap.server.core.register.service;
 
-import org.apache.skywalking.oap.server.core.register.ServiceInstanceInventory;
+import com.google.gson.JsonObject;
 import org.apache.skywalking.oap.server.library.module.Service;
 
 /**
@@ -26,8 +26,10 @@ import org.apache.skywalking.oap.server.library.module.Service;
  */
 public interface IServiceInstanceInventoryRegister extends Service {
 
-    int getOrCreate(int serviceId, String serviceInstanceName, long registerTime,
-        ServiceInstanceInventory.AgentOsInfo osInfo);
+    int getOrCreate(int serviceId, String serviceInstanceName, String uuid, long registerTime,
+        JsonObject properties);
 
     int getOrCreate(int serviceId, int addressId, long registerTime);
+
+    void heartbeat(int serviceInstanceId, long heartBeatTime);
 }

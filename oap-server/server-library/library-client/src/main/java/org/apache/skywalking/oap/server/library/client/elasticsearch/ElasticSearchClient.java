@@ -18,14 +18,18 @@
 
 package org.apache.skywalking.oap.server.library.client.elasticsearch;
 
-import java.io.IOException;
+import com.google.gson.*;
+import java.io.*;
 import java.util.*;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.http.*;
+import org.apache.http.auth.*;
+import org.apache.http.client.CredentialsProvider;
+import org.apache.http.client.methods.*;
 import org.apache.http.entity.ContentType;
+import org.apache.http.impl.client.BasicCredentialsProvider;
 import org.apache.http.nio.entity.NStringEntity;
 import org.apache.skywalking.oap.server.library.client.Client;
-import org.apache.skywalking.oap.server.library.client.*;
 import org.elasticsearch.action.admin.indices.create.*;
 import org.elasticsearch.action.admin.indices.delete.*;
 import org.elasticsearch.action.admin.indices.get.GetIndexRequest;
@@ -36,9 +40,8 @@ import org.elasticsearch.action.search.*;
 import org.elasticsearch.action.support.WriteRequest;
 import org.elasticsearch.action.update.UpdateRequest;
 import org.elasticsearch.client.*;
-import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.*;
-import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.common.xcontent.*;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.slf4j.*;
 
@@ -49,29 +52,37 @@ public class ElasticSearchClient implements Client {
 
     private static final Logger logger = LoggerFactory.getLogger(ElasticSearchClient.class);
 
-    private static final String TYPE = "type";
+    public static final String TYPE = "type";
     private final String clusterNodes;
-    private final NameSpace namespace;
+    private final String namespace;
+    private final String user;
+    private final String password;
     private RestHighLevelClient client;
 
-    public ElasticSearchClient(String clusterNodes, NameSpace namespace) {
+    public ElasticSearchClient(String clusterNodes, String namespace, String user, String password) {
         this.clusterNodes = clusterNodes;
         this.namespace = namespace;
+        this.user = user;
+        this.password = password;
     }
 
-    @Override public void initialize() {
+    @Override public void connect() throws IOException {
         List<HttpHost> pairsList = parseClusterNodes(clusterNodes);
-
-        client = new RestHighLevelClient(
-            RestClient.builder(pairsList.toArray(new HttpHost[0])));
+        RestClientBuilder builder;
+        if (StringUtils.isNotBlank(user) && StringUtils.isNotBlank(password)) {
+            final CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
+            credentialsProvider.setCredentials(AuthScope.ANY, new UsernamePasswordCredentials(user, password));
+            builder = RestClient.builder(pairsList.toArray(new HttpHost[0]))
+                .setHttpClientConfigCallback(httpClientBuilder -> httpClientBuilder.setDefaultCredentialsProvider(credentialsProvider));
+        } else {
+            builder = RestClient.builder(pairsList.toArray(new HttpHost[0]));
+        }
+        client = new RestHighLevelClient(builder);
+        client.ping();
     }
 
-    @Override public void shutdown() {
-        try {
-            client.close();
-        } catch (IOException e) {
-            logger.error(e.getMessage(), e);
-        }
+    @Override public void shutdown() throws IOException {
+        client.close();
     }
 
     private List<HttpHost> parseClusterNodes(String nodes) {
@@ -87,15 +98,24 @@ public class ElasticSearchClient implements Client {
         return httpHosts;
     }
 
-    public boolean createIndex(String indexName, Settings settings,
-        XContentBuilder mappingBuilder) throws IOException {
+    public boolean createIndex(String indexName, JsonObject settings, JsonObject mapping) throws IOException {
         indexName = formatIndexName(indexName);
         CreateIndexRequest request = new CreateIndexRequest(indexName);
-        request.settings(settings);
-        request.mapping(TYPE, mappingBuilder);
+        request.settings(settings.toString(), XContentType.JSON);
+        request.mapping(TYPE, mapping.toString(), XContentType.JSON);
         CreateIndexResponse response = client.indices().create(request);
-        logger.info("create {} index finished, isAcknowledged: {}", indexName, response.isAcknowledged());
+        logger.debug("create {} index finished, isAcknowledged: {}", indexName, response.isAcknowledged());
         return response.isAcknowledged();
+    }
+
+    public JsonObject getIndex(String indexName) throws IOException {
+        indexName = formatIndexName(indexName);
+        GetIndexRequest request = new GetIndexRequest();
+        request.indices(indexName);
+        Response response = client.getLowLevelClient().performRequest(HttpGet.METHOD_NAME, "/" + indexName);
+        InputStreamReader reader = new InputStreamReader(response.getEntity().getContent());
+        Gson gson = new Gson();
+        return gson.fromJson(reader, JsonObject.class);
     }
 
     public boolean deleteIndex(String indexName) throws IOException {
@@ -103,7 +123,7 @@ public class ElasticSearchClient implements Client {
         DeleteIndexRequest request = new DeleteIndexRequest(indexName);
         DeleteIndexResponse response;
         response = client.indices().delete(request);
-        logger.info("delete {} index finished, isAcknowledged: {}", indexName, response.isAcknowledged());
+        logger.debug("delete {} index finished, isAcknowledged: {}", indexName, response.isAcknowledged());
         return response.isAcknowledged();
     }
 
@@ -112,6 +132,45 @@ public class ElasticSearchClient implements Client {
         GetIndexRequest request = new GetIndexRequest();
         request.indices(indexName);
         return client.indices().exists(request);
+    }
+
+    public boolean isExistsTemplate(String indexName) throws IOException {
+        indexName = formatIndexName(indexName);
+
+        Response response = client.getLowLevelClient().performRequest(HttpHead.METHOD_NAME, "/_template/" + indexName);
+
+        int statusCode = response.getStatusLine().getStatusCode();
+        if (statusCode == 200) {
+            return true;
+        } else if (statusCode == 404) {
+            return false;
+        } else {
+            throw new IOException("The response status code of template exists request should be 200 or 404, but it is " + statusCode);
+        }
+    }
+
+    public boolean createTemplate(String indexName, JsonObject settings, JsonObject mapping) throws IOException {
+        indexName = formatIndexName(indexName);
+
+        JsonArray patterns = new JsonArray();
+        patterns.add(indexName + "_*");
+
+        JsonObject template = new JsonObject();
+        template.add("index_patterns", patterns);
+        template.add("settings", settings);
+        template.add("mappings", mapping);
+
+        HttpEntity entity = new NStringEntity(template.toString(), ContentType.APPLICATION_JSON);
+
+        Response response = client.getLowLevelClient().performRequest(HttpPut.METHOD_NAME, "/_template/" + indexName, Collections.emptyMap(), entity);
+        return response.getStatusLine().getStatusCode() == 200;
+    }
+
+    public boolean deleteTemplate(String indexName) throws IOException {
+        indexName = formatIndexName(indexName);
+
+        Response response = client.getLowLevelClient().performRequest(HttpDelete.METHOD_NAME, "/_template/" + indexName);
+        return response.getStatusLine().getStatusCode() == 200;
     }
 
     public SearchResponse search(String indexName, SearchSourceBuilder searchSourceBuilder) throws IOException {
@@ -128,6 +187,13 @@ public class ElasticSearchClient implements Client {
         return client.get(request);
     }
 
+    public MultiGetResponse multiGet(String indexName, List<String> ids) throws IOException {
+        final String newIndexName = formatIndexName(indexName);
+        MultiGetRequest request = new MultiGetRequest();
+        ids.forEach(id -> request.add(newIndexName, TYPE, id));
+        return client.multiGet(request);
+    }
+
     public void forceInsert(String indexName, String id, XContentBuilder source) throws IOException {
         IndexRequest request = prepareInsert(indexName, id, source);
         request.setRefreshPolicy(WriteRequest.RefreshPolicy.IMMEDIATE);
@@ -135,7 +201,6 @@ public class ElasticSearchClient implements Client {
     }
 
     public void forceUpdate(String indexName, String id, XContentBuilder source, long version) throws IOException {
-        indexName = formatIndexName(indexName);
         UpdateRequest request = prepareUpdate(indexName, id, source);
         request.version(version);
         request.setRefreshPolicy(WriteRequest.RefreshPolicy.IMMEDIATE);
@@ -143,7 +208,6 @@ public class ElasticSearchClient implements Client {
     }
 
     public void forceUpdate(String indexName, String id, XContentBuilder source) throws IOException {
-        indexName = formatIndexName(indexName);
         UpdateRequest request = prepareUpdate(indexName, id, source);
         request.setRefreshPolicy(WriteRequest.RefreshPolicy.IMMEDIATE);
         client.update(request);
@@ -159,48 +223,51 @@ public class ElasticSearchClient implements Client {
         return new UpdateRequest(indexName, TYPE, id).doc(source);
     }
 
-    public void delete(String indexName, String timeBucketColumnName, long startTimeBucket,
-        long endTimeBucket) throws IOException {
+    public int delete(String indexName, String timeBucketColumnName, long endTimeBucket) throws IOException {
         indexName = formatIndexName(indexName);
-        Map<String, String> params = Collections.singletonMap("pretty", "true");
+        Map<String, String> params = Collections.singletonMap("conflicts", "proceed");
         String jsonString = "{" +
             "  \"query\": {" +
             "    \"range\": {" +
             "      \"" + timeBucketColumnName + "\": {" +
-            "        \"gte\": " + startTimeBucket + "," +
-            "        \"lte\": " + endTimeBucket + "" +
+            "        \"lte\": " + endTimeBucket +
             "      }" +
             "    }" +
             "  }" +
             "}";
         HttpEntity entity = new NStringEntity(jsonString, ContentType.APPLICATION_JSON);
-        client.getLowLevelClient().performRequest("POST", "/" + indexName + "/_delete_by_query", params, entity);
+        Response response = client.getLowLevelClient().performRequest(HttpPost.METHOD_NAME, "/" + indexName + "/_delete_by_query", params, entity);
+        logger.debug("delete indexName: {}, jsonString : {}", indexName, jsonString);
+        return response.getStatusLine().getStatusCode();
     }
 
-    private String formatIndexName(String indexName) {
-        if (Objects.nonNull(namespace) && StringUtils.isNotEmpty(namespace.getNameSpace())) {
-            return namespace.getNameSpace() + "_" + indexName;
+    public String formatIndexName(String indexName) {
+        if (StringUtils.isNotEmpty(namespace)) {
+            return namespace + "_" + indexName;
         }
         return indexName;
     }
 
-    public BulkProcessor createBulkProcessor(int bulkActions, int bulkSize, int flushInterval,
-        int concurrentRequests) {
+    public BulkProcessor createBulkProcessor(int bulkActions, int bulkSize, int flushInterval, int concurrentRequests) {
         BulkProcessor.Listener listener = new BulkProcessor.Listener() {
             @Override
             public void beforeBulk(long executionId, BulkRequest request) {
-
+                int numberOfActions = request.numberOfActions();
+                logger.debug("Executing bulk [{}] with {} requests", executionId, numberOfActions);
             }
 
             @Override
-            public void afterBulk(long executionId, BulkRequest request,
-                BulkResponse response) {
-
+            public void afterBulk(long executionId, BulkRequest request, BulkResponse response) {
+                if (response.hasFailures()) {
+                    logger.warn("Bulk [{}] executed with failures", executionId);
+                } else {
+                    logger.info("Bulk [{}] completed in {} milliseconds", executionId, response.getTook().getMillis());
+                }
             }
 
             @Override
             public void afterBulk(long executionId, BulkRequest request, Throwable failure) {
-                logger.error("{} data bulk failed, reason: {}", request.numberOfActions(), failure);
+                logger.error("Failed to execute bulk", failure);
             }
         };
 

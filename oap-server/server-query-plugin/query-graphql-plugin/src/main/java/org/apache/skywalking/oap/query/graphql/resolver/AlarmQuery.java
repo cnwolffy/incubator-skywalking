@@ -19,18 +19,46 @@
 package org.apache.skywalking.oap.query.graphql.resolver;
 
 import com.coxautodev.graphql.tools.GraphQLQueryResolver;
-import org.apache.skywalking.oap.query.graphql.type.AlarmTrend;
-import org.apache.skywalking.oap.query.graphql.type.Alarms;
-import org.apache.skywalking.oap.query.graphql.type.Duration;
-import org.apache.skywalking.oap.query.graphql.type.Pagination;
-import org.apache.skywalking.oap.query.graphql.type.Scope;
+import java.io.IOException;
+import org.apache.skywalking.oap.query.graphql.type.*;
+import org.apache.skywalking.oap.server.core.CoreModule;
+import org.apache.skywalking.oap.server.core.query.*;
+import org.apache.skywalking.oap.server.core.query.entity.*;
+import org.apache.skywalking.oap.server.library.module.ModuleManager;
 
+/**
+ * @author peng-yongsheng
+ */
 public class AlarmQuery implements GraphQLQueryResolver {
+
+    private final ModuleManager moduleManager;
+    private AlarmQueryService queryService;
+
+    public AlarmQuery(ModuleManager moduleManager) {
+        this.moduleManager = moduleManager;
+    }
+
+    private AlarmQueryService getQueryService() {
+        if (queryService == null) {
+            this.queryService = moduleManager.find(CoreModule.NAME).provider().getService(AlarmQueryService.class);
+        }
+        return queryService;
+    }
+
     public AlarmTrend getAlarmTrend(final Duration duration) {
         return new AlarmTrend();
     }
 
-    public Alarms getAlarm(final Duration duration, final Scope scope,final String keyword, final Pagination paging) {
-        return new Alarms();
+    public Alarms getAlarm(final Duration duration, final Scope scope, final String keyword,
+        final Pagination paging) throws IOException {
+        long startTimeBucket = DurationUtils.INSTANCE.startTimeDurationToSecondTimeBucket(duration.getStep(), duration.getStart());
+        long endTimeBucket = DurationUtils.INSTANCE.endTimeDurationToSecondTimeBucket(duration.getStep(), duration.getEnd());
+
+        Integer scopeId = null;
+        if (scope != null) {
+            scopeId = scope.getScopeId();
+        }
+
+        return getQueryService().getAlarm(scopeId, keyword, paging, startTimeBucket, endTimeBucket);
     }
 }

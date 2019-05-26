@@ -20,10 +20,12 @@ package org.apache.skywalking.oap.server.core.cache;
 
 import com.google.common.cache.*;
 import java.util.Objects;
-import org.apache.skywalking.oap.server.core.*;
+import org.apache.skywalking.oap.server.core.Const;
 import org.apache.skywalking.oap.server.core.register.ServiceInstanceInventory;
+import org.apache.skywalking.oap.server.core.storage.StorageModule;
 import org.apache.skywalking.oap.server.core.storage.cache.IServiceInstanceInventoryCacheDAO;
 import org.apache.skywalking.oap.server.library.module.*;
+import org.apache.skywalking.oap.server.library.util.BooleanUtils;
 import org.slf4j.*;
 
 import static java.util.Objects.isNull;
@@ -35,6 +37,7 @@ public class ServiceInstanceInventoryCache implements Service {
 
     private static final Logger logger = LoggerFactory.getLogger(ServiceInstanceInventoryCache.class);
 
+    private final ServiceInstanceInventory userServiceInstance;
     private final Cache<Integer, ServiceInstanceInventory> serviceInstanceIdCache = CacheBuilder.newBuilder().initialCapacity(100).maximumSize(5000).build();
 
     private final Cache<String, Integer> serviceInstanceNameCache = CacheBuilder.newBuilder().initialCapacity(100).maximumSize(5000).build();
@@ -46,22 +49,27 @@ public class ServiceInstanceInventoryCache implements Service {
 
     public ServiceInstanceInventoryCache(ModuleManager moduleManager) {
         this.moduleManager = moduleManager;
+
+        this.userServiceInstance = new ServiceInstanceInventory();
+        this.userServiceInstance.setSequence(Const.USER_INSTANCE_ID);
+        this.userServiceInstance.setName(Const.USER_CODE);
+        this.userServiceInstance.setServiceId(Const.USER_SERVICE_ID);
+        this.userServiceInstance.setIsAddress(BooleanUtils.FALSE);
     }
 
     private IServiceInstanceInventoryCacheDAO getCacheDAO() {
         if (isNull(cacheDAO)) {
-            this.cacheDAO = moduleManager.find(CoreModule.NAME).getService(IServiceInstanceInventoryCacheDAO.class);
+            this.cacheDAO = moduleManager.find(StorageModule.NAME).provider().getService(IServiceInstanceInventoryCacheDAO.class);
         }
         return this.cacheDAO;
     }
 
     public ServiceInstanceInventory get(int serviceInstanceId) {
-        ServiceInstanceInventory serviceInstanceInventory = null;
-        try {
-            serviceInstanceInventory = serviceInstanceIdCache.get(serviceInstanceId, () -> getCacheDAO().get(serviceInstanceId));
-        } catch (Throwable e) {
-            logger.error(e.getMessage(), e);
+        if (Const.USER_INSTANCE_ID == serviceInstanceId) {
+            return userServiceInstance;
         }
+
+        ServiceInstanceInventory serviceInstanceInventory = serviceInstanceIdCache.getIfPresent(serviceInstanceId);
 
         if (Objects.isNull(serviceInstanceInventory)) {
             serviceInstanceInventory = getCacheDAO().get(serviceInstanceId);
@@ -72,32 +80,22 @@ public class ServiceInstanceInventoryCache implements Service {
         return serviceInstanceInventory;
     }
 
-    public int getServiceInstanceId(int serviceId, String serviceInstanceName) {
-        int serviceInstanceId = Const.NONE;
-        try {
-            serviceInstanceId = serviceInstanceNameCache.get(ServiceInstanceInventory.buildId(serviceId, serviceInstanceName), () -> getCacheDAO().getServiceInstanceId(serviceId, serviceInstanceName));
-        } catch (Throwable e) {
-            logger.error(e.getMessage(), e);
-        }
+    public int getServiceInstanceId(int serviceId, String uuid) {
+        Integer serviceInstanceId = serviceInstanceNameCache.getIfPresent(ServiceInstanceInventory.buildId(serviceId, uuid));
 
-        if (serviceInstanceId == Const.NONE) {
-            serviceInstanceId = getCacheDAO().getServiceInstanceId(serviceId, serviceInstanceName);
+        if (Objects.isNull(serviceInstanceId) || serviceInstanceId == Const.NONE) {
+            serviceInstanceId = getCacheDAO().getServiceInstanceId(serviceId, uuid);
             if (serviceId != Const.NONE) {
-                serviceInstanceNameCache.put(ServiceInstanceInventory.buildId(serviceId, serviceInstanceName), serviceInstanceId);
+                serviceInstanceNameCache.put(ServiceInstanceInventory.buildId(serviceId, uuid), serviceInstanceId);
             }
         }
         return serviceInstanceId;
     }
 
     public int getServiceInstanceId(int serviceId, int addressId) {
-        int serviceInstanceId = Const.NONE;
-        try {
-            serviceInstanceId = addressIdCache.get(ServiceInstanceInventory.buildId(serviceId, addressId), () -> getCacheDAO().getServiceInstanceId(serviceId, addressId));
-        } catch (Throwable e) {
-            logger.error(e.getMessage(), e);
-        }
+        Integer serviceInstanceId = addressIdCache.getIfPresent(ServiceInstanceInventory.buildId(serviceId, addressId));
 
-        if (serviceInstanceId == Const.NONE) {
+        if (Objects.isNull(serviceInstanceId) || serviceInstanceId == Const.NONE) {
             serviceInstanceId = getCacheDAO().getServiceInstanceId(serviceId, addressId);
             if (serviceId != Const.NONE) {
                 addressIdCache.put(ServiceInstanceInventory.buildId(serviceId, addressId), serviceInstanceId);

@@ -19,7 +19,7 @@
 package org.apache.skywalking.oap.server.core.storage.model;
 
 import java.util.List;
-import org.apache.skywalking.oap.server.core.CoreModule;
+import org.apache.skywalking.oap.server.core.*;
 import org.apache.skywalking.oap.server.core.storage.StorageException;
 import org.apache.skywalking.oap.server.library.client.Client;
 import org.apache.skywalking.oap.server.library.module.ModuleManager;
@@ -39,22 +39,40 @@ public abstract class ModelInstaller {
     }
 
     public final void install(Client client) throws StorageException {
-        IModelGetter modelGetter = moduleManager.find(CoreModule.NAME).getService(IModelGetter.class);
+        IModelGetter modelGetter = moduleManager.find(CoreModule.NAME).provider().getService(IModelGetter.class);
+
         List<Model> models = modelGetter.getModels();
+        boolean debug = System.getProperty("debug") != null;
 
-        Boolean debug = System.getProperty("debug") != null;
-
-        for (Model model : models) {
-            if (!isExists(client, model)) {
-                logger.info("table: {} not exists", model.getName());
-                createTable(client, model);
-            } else if (debug) {
-                logger.info("table: {} exists", model.getName());
-                deleteTable(client, model);
-                createTable(client, model);
+        if (RunningMode.isNoInitMode()) {
+            for (Model model : models) {
+                while (!isExists(client, model)) {
+                    try {
+                        logger.info("table: {} does not exist. OAP is running in 'no-init' mode, waiting... retry 3s later.", model.getName());
+                        Thread.sleep(3000L);
+                    } catch (InterruptedException e) {
+                        logger.error(e.getMessage());
+                    }
+                }
             }
-            columnCheck(client, model);
+        } else {
+            for (Model model : models) {
+                if (!isExists(client, model)) {
+                    logger.info("table: {} does not exist", model.getName());
+                    createTable(client, model);
+                } else if (debug) {
+                    logger.info("table: {} exists", model.getName());
+                    deleteTable(client, model);
+                    createTable(client, model);
+                }
+                columnCheck(client, model);
+            }
         }
+    }
+
+    public final void overrideColumnName(String columnName, String newName) {
+        IModelOverride modelOverride = moduleManager.find(CoreModule.NAME).provider().getService(IModelOverride.class);
+        modelOverride.overrideColumnName(columnName, newName);
     }
 
     protected abstract boolean isExists(Client client, Model model) throws StorageException;

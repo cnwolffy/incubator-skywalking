@@ -18,7 +18,8 @@
 
 package org.apache.skywalking.oap.server.storage.plugin.elasticsearch;
 
-import lombok.*;
+import lombok.Getter;
+import lombok.Setter;
 import org.apache.skywalking.oap.server.library.module.ModuleConfig;
 
 /**
@@ -40,8 +41,28 @@ public class StorageModuleElasticsearchConfig extends ModuleConfig {
     private int bulkSize = 20;
     private int flushInterval = 10;
     private int concurrentRequests = 2;
+    private String user;
+    private String password;
+    private int metadataQueryMaxSize = 5000;
+    private int segmentQueryMaxSize = 200;
 
-    int getIndexShardsNumber() {
+    public String getUser() {
+        return user;
+    }
+
+    public void setUser(String user) {
+        this.user = user;
+    }
+
+    public String getPassword() {
+        return password;
+    }
+
+    public void setPassword(String password) {
+        this.password = password;
+    }
+
+    public int getIndexShardsNumber() {
         return indexShardsNumber;
     }
 
@@ -49,7 +70,7 @@ public class StorageModuleElasticsearchConfig extends ModuleConfig {
         this.indexShardsNumber = indexShardsNumber;
     }
 
-    int getIndexReplicasNumber() {
+    public int getIndexReplicasNumber() {
         return indexReplicasNumber;
     }
 
@@ -135,5 +156,21 @@ public class StorageModuleElasticsearchConfig extends ModuleConfig {
 
     public void setConcurrentRequests(int concurrentRequests) {
         this.concurrentRequests = concurrentRequests == 0 ? 2 : concurrentRequests;
+    }
+
+    public int getMetadataQueryMaxSize() {
+        return metadataQueryMaxSize;
+    }
+
+    public void setMetadataQueryMaxSize(int metadataQueryMaxSize) {
+        this.metadataQueryMaxSize = metadataQueryMaxSize;
+    }
+
+    public int getSegmentQueryMaxSize() {
+        return segmentQueryMaxSize;
+    }
+
+    public void setSegmentQueryMaxSize(int segmentQueryMaxSize) {
+        this.segmentQueryMaxSize = segmentQueryMaxSize;
     }
 }

@@ -19,6 +19,7 @@
 package org.apache.skywalking.oap.server.core.cache;
 
 import com.google.common.cache.*;
+import java.util.Objects;
 import org.apache.skywalking.oap.server.core.Const;
 import org.apache.skywalking.oap.server.core.register.EndpointInventory;
 import org.apache.skywalking.oap.server.core.storage.StorageModule;
@@ -36,35 +37,36 @@ public class EndpointInventoryCache implements Service {
     private static final Logger logger = LoggerFactory.getLogger(EndpointInventoryCache.class);
 
     private final ModuleManager moduleManager;
-    private IEndpointInventoryCacheDAO cacheDAO;
-
-    public EndpointInventoryCache(ModuleManager moduleManager) {
-        this.moduleManager = moduleManager;
-    }
-
+    private final EndpointInventory userEndpoint;
     private final Cache<String, Integer> endpointNameCache = CacheBuilder.newBuilder().initialCapacity(5000).maximumSize(100000).build();
 
     private final Cache<Integer, EndpointInventory> endpointIdCache = CacheBuilder.newBuilder().initialCapacity(5000).maximumSize(100000).build();
 
+    private IEndpointInventoryCacheDAO cacheDAO;
+
+    public EndpointInventoryCache(ModuleManager moduleManager) {
+        this.moduleManager = moduleManager;
+
+        this.userEndpoint = new EndpointInventory();
+        this.userEndpoint.setSequence(Const.USER_ENDPOINT_ID);
+        this.userEndpoint.setName(Const.USER_CODE);
+        this.userEndpoint.setServiceId(Const.USER_SERVICE_ID);
+    }
+
     private IEndpointInventoryCacheDAO getCacheDAO() {
         if (isNull(cacheDAO)) {
-            cacheDAO = moduleManager.find(StorageModule.NAME).getService(IEndpointInventoryCacheDAO.class);
+            cacheDAO = moduleManager.find(StorageModule.NAME).provider().getService(IEndpointInventoryCacheDAO.class);
         }
         return cacheDAO;
     }
 
-    public int getEndpointId(int serviceId, String endpointName) {
-        String id = EndpointInventory.buildId(serviceId, endpointName);
+    public int getEndpointId(int serviceId, String endpointName, int detectPoint) {
+        String id = EndpointInventory.buildId(serviceId, endpointName, detectPoint);
 
-        int endpointId = Const.NONE;
-        try {
-            endpointId = endpointNameCache.get(id, () -> getCacheDAO().getEndpointId(serviceId, endpointName));
-        } catch (Throwable e) {
-            logger.error(e.getMessage(), e);
-        }
+        Integer endpointId = endpointNameCache.getIfPresent(id);
 
-        if (endpointId == Const.NONE) {
-            endpointId = getCacheDAO().getEndpointId(serviceId, endpointName);
+        if (Objects.isNull(endpointId) || endpointId == Const.NONE) {
+            endpointId = getCacheDAO().getEndpointId(serviceId, endpointName, detectPoint);
             if (endpointId != Const.NONE) {
                 endpointNameCache.put(id, endpointId);
             }
@@ -73,12 +75,11 @@ public class EndpointInventoryCache implements Service {
     }
 
     public EndpointInventory get(int endpointId) {
-        EndpointInventory endpointInventory = null;
-        try {
-            endpointInventory = endpointIdCache.get(endpointId, () -> getCacheDAO().get(endpointId));
-        } catch (Throwable e) {
-            logger.error(e.getMessage(), e);
+        if (Const.USER_ENDPOINT_ID == endpointId) {
+            return userEndpoint;
         }
+
+        EndpointInventory endpointInventory = endpointIdCache.getIfPresent(endpointId);
 
         if (isNull(endpointInventory)) {
             endpointInventory = getCacheDAO().get(endpointId);
